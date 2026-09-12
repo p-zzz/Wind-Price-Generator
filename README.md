@@ -125,17 +125,19 @@ validated range this is trustworthy over.
 slices of data ultimately sourced from:
 
 - [ENTSO-E Transparency Platform](https://transparency.entsoe.eu/) (load, net
-  position, prices)
+  position, prices). Source: ENTSO-E Transparency Platform
+  (transparency.entsoe.eu).
 - [Copernicus Climate Data Store / ERA5 reanalysis](https://cds.climate.copernicus.eu/)
-  (wind speed)
-- [Energinet CapacityPerMunicipality](https://energinet.dk/) (installed
-  capacity baseline, baked into `config/example.yaml`)
+  (wind speed). Contains modified Copernicus Climate Change Service information
+  2026. Neither the European Commission nor ECMWF is responsible for any use
+  that may be made of the Copernicus information or data it contains.
+- [Energinet Energi Data Service](https://www.energidataservice.dk/) (installed
+  capacity baseline in `config/example.yaml`). Licensed under
+  [CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/). Source: Energinet
+  (www.energidataservice.dk).
 
-This repo's code is MIT-licensed (see `LICENSE`); that license covers the code,
-not necessarily unrestricted redistribution of data derived from the sources
-above under their own terms. **This has not been independently confirmed with
-the data sources' terms of use or with the thesis supervisors before any public
-release of this repo -- treat that as an open item, not a settled one.**
+This repo's code is MIT-licensed (see `LICENSE`), separately from the data
+terms above.
 
 ## Citation
 
