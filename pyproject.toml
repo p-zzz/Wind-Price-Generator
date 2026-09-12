@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dk1-scenario-generator"
+version = "0.1.0"
+description = "Stochastic joint scenario generator for DK1 wind generation, solar generation, load, net position, and day-ahead electricity price."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+dependencies = [
+    # Pinned, not just floored: models/*.pkl embed fitted statsmodels/patsy
+    # objects, which are fragile to unpickle across major version bumps (hit
+    # this directly during extraction -- statsmodels 0.15.0/pandas 3.0.5
+    # broke predict() on a pkl fitted under 0.14.6/2.3.3 with an unrelated-looking
+    # "'PandasData' object has no attribute 'model_spec'" error). These versions
+    # are exactly what the thesis repo's models were fitted under.
+    "numpy==2.4.2",
+    "pandas==2.3.3",
+    "scipy==1.17.1",
+    "statsmodels==0.14.6",
+    "patsy==1.0.2",
+    "torch==2.11.0",
+    "pyyaml==6.0.3",
+    "pyarrow>=15.0",
+    "pytz",
+]
+
+[tool.setuptools.packages.find]
+include = ["generator*"]

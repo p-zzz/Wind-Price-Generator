@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+*.egg-info/
+outputs/
+
+# created only if pipeline/ (advanced tier) is actually run
+DATA/
+analysis/
+
+.DS_Store
