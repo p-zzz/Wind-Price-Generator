@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 import time as _time
 import random
+from pathlib import Path
 import requests
 import pandas as pd
 from dataclasses import dataclass
@@ -113,6 +115,14 @@ class EntsoeClient:
                 if r.status_code == 200 and b"<Acknowledgement_MarketDocument" not in r.content:
                     return r.content
 
+                # Retrying can't fix a rejected token -- fail now instead of backing off 12x.
+                if r.status_code in (401, 403):
+                    msg = _extract_entsoe_error(r.content) or r.reason
+                    raise PermissionError(
+                        f"ENTSO-E rejected the API token (HTTP {r.status_code}: {msg}). "
+                        f"Check ENTSOE_TOKEN and that REST API access is enabled for the account."
+                    )
+
                 if b"<Acknowledgement_MarketDocument" in r.content:
                     msg = _extract_entsoe_error(r.content) or "ENTSO-E API returned an error document."
 
@@ -139,6 +149,8 @@ class EntsoeClient:
                 r.raise_for_status()
                 return r.content
 
+            except (PermissionError, ValueError):
+                raise  # bad token / bad request parameters: not transient
             except Exception as e:
                 dt = _time.time() - t0
                 last_err = e
@@ -148,6 +160,25 @@ class EntsoeClient:
                 _time.sleep(sleep_s)
 
         raise RuntimeError(f"Failed after {self.max_retries} retries: {last_err}")
+
+
+TOKEN_FILE = Path("DATA/token.txt")
+
+
+def resolve_token() -> str:
+    """ENTSOE_TOKEN env var if set (nothing on disk), else DATA/token.txt (relative
+    to cwd, i.e. the repo root; gitignored via DATA/)."""
+    token = os.environ.get("ENTSOE_TOKEN", "").strip()
+    if token:
+        return token
+    if TOKEN_FILE.exists():
+        token = TOKEN_FILE.read_text().strip()
+        if token:
+            return token
+    raise SystemExit(
+        "No ENTSO-E API token found. Either export ENTSOE_TOKEN='...' or save the token "
+        f"as {TOKEN_FILE} (run from the repo root; DATA/ is gitignored)."
+    )
 
 
 def _extract_entsoe_error(xml_bytes: bytes) -> Optional[str]:
@@ -486,11 +517,7 @@ if __name__ == "__main__":
     ]
     ############################################
 
-    token = os.environ.get("ENTSOE_TOKEN")
-    if not token:
-        raise SystemExit("Set your API token: export ENTSOE_TOKEN='...'")
-
-    client = EntsoeClient(token=token, max_retries=12, timeout_s=60)
+    client = EntsoeClient(token=resolve_token(), max_retries=12, timeout_s=60)
 
     DEFAULT_START = pd.Timestamp("2014-01-01", tz="Europe/Copenhagen")
     END = pd.Timestamp("2026-07-01", tz="Europe/Copenhagen")

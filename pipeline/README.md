@@ -11,8 +11,11 @@ specifically want to retrain.
 
 ## What you need that isn't provided
 
-- An **ENTSO-E Transparency Platform** API token (free registration), saved as
-  `DATA/token.txt` at the repo root.
+- An **ENTSO-E Transparency Platform** API token (free registration, then request
+  REST API access by emailing transparency@entsoe.eu). Either export it as
+  `ENTSOE_TOKEN` (takes precedence; nothing written to disk) or save it as
+  `DATA/token.txt` at the repo root (gitignored). Run the download scripts from the
+  repo root.
 - A **Copernicus Climate Data Store (CDS)** API key (free registration) for ERA5
   wind reanalysis data, configured per `cdsapi`'s usual `~/.cdsapirc` convention.
 
