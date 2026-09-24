@@ -99,22 +99,28 @@ GAS_FILL_VALUE  = 20.0
 LOAD_FLOOR_MW   = 10.0
 
 K_COMPONENTS = 6
-HIDDEN_DIMS  = [64, 64, 32]
+HIDDEN_DIMS  = [128, 128, 64]   # was [64, 64, 32]; see sweep note below
 INPUT_DIM    = 11
 LOG_STD_MIN  = -4.0
 LOG_STD_MAX  = 6.0
 BATCH_SIZE   = 512
 EPOCHS       = 200
 LR           = 1e-3
-WEIGHT_DECAY = 1e-4
+WEIGHT_DECAY = 1e-2             # was 1e-4; see sweep note below
 PATIENCE     = 20
 OVERSAMPLE_WEIGHT = 3.5
 N_SIM_PATHS  = 10
 # Seeds weight init + the oversampling sampler (the train/val split is chronological,
-# so already deterministic). Val NLL varies ~0.1 across seeds, so the shipped model
-# was chosen as the best val NLL of seeds {1, 2, 3, 4, 42} on signed net position;
-# the default reproduces it. Override with PRICE_MDN_SEED=<int> to try others.
-SEED = int(os.environ.get("PRICE_MDN_SEED", 2))
+# so already deterministic). Single models vary a lot across seeds on generated
+# scenario inputs, so the generator ships a seed ensemble: train once per
+# PRICE_MDN_SEED=<int> and combine with pipeline/train/assemble_price_ensemble.py.
+#
+# HIDDEN_DIMS / WEIGHT_DECAY come from a 2026-09 sweep (33 configs x 3-5 seeds,
+# scored on val NLL + between-seed spread of E[price] on generated scenario inputs):
+# vs the previous [64, 64, 32] / 1e-4, val NLL 4.80 -> 4.73 and the seed-to-seed
+# std of the mean scenario price 4.8 -> 1.3 EUR/MWh. Weight decay above ~1e-2
+# collapses the (unscaled, EUR/MWh) price target towards 0 -- don't raise it further.
+SEED = int(os.environ.get("PRICE_MDN_SEED", 1))
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}")
