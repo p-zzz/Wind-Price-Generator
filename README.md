@@ -105,14 +105,23 @@ in-domain range this is trustworthy over.
   joint distribution and autocorrelation structure but means simulated paths
   cannot express a future load/net-position regime that never occurred in that
   window.
-- **Net position is unsigned in the shipped model and data.** A bug in the
-  ENTSO-E download parser dropped the flow direction, so the shipped price
-  model was trained on net-position *magnitudes* (import and export look the
-  same), and `data/bootstrap_pool.parquet` holds the same unsigned values. The
-  parser in `pipeline/download/entsoe_download.py` is fixed (export positive,
-  import negative), but the shipped model and data have not yet been rebuilt
-  from it. Until they are, `net_position_MW` in generated scenarios is
-  non-negative and should not be read as a direction of flow.
+- **The price model is a 10-seed ensemble, and some model noise remains.**
+  Single training runs of Price MDN v11 (same data, different seed) agree on
+  historical inputs but diverge on generated scenarios, which combine inputs
+  (e.g. flat gas with 2026 installed capacity) the 2015-2025 data barely
+  covers. The shipped model therefore pools 10 seeds with equal weight
+  (`models/price_mdn_v11_seed{1..10}.pt`; rebuild with
+  `pipeline/train/price_mdn_v11.py` per `PRICE_MDN_SEED` +
+  `pipeline/train/assemble_price_ensemble.py`), using hyperparameters chosen
+  for low seed-to-seed spread. Residual model noise is roughly ±0.4 EUR/MWh on
+  a scenario's mean price (about ±20 M EUR NPV for the reference WinPACT
+  case); treat smaller scenario differences as not meaningful.
+- **Net position sign convention: export positive, import negative.** Earlier
+  versions of this repo shipped a price model and `data/bootstrap_pool.parquet`
+  built on *unsigned* net-position magnitudes, because the ENTSO-E download
+  parser dropped the flow direction. Both have been rebuilt from the fixed
+  parser; scenarios generated with older versions have non-negative
+  `net_position_MW` and are not comparable on this column.
 
 ## Repository layout
 
