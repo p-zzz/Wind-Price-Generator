@@ -163,7 +163,7 @@ def _extract_entsoe_error(xml_bytes: bytes) -> Optional[str]:
 
 
 # XML parsing
-def parse_timeseries_points(xml_bytes: bytes) -> pd.DataFrame:
+def parse_timeseries_points(xml_bytes: bytes, dedupe: bool = True) -> pd.DataFrame:
     if not xml_bytes:
         return pd.DataFrame(columns=["value"]).set_index(pd.DatetimeIndex([], name="time_utc"))
 
@@ -174,8 +174,10 @@ def parse_timeseries_points(xml_bytes: bytes) -> pd.DataFrame:
         # Some useful metadata
         business_type = _first_text(ts, ".//*[local-name()='businessType']")
         psr_type = _first_text(ts, ".//*[local-name()='MktPSRType']/*[local-name()='psrType']")
-        in_domain = _first_text(ts, ".//*[local-name()='in_Domain']/*[local-name()='mRID']")
-        out_domain = _first_text(ts, ".//*[local-name()='out_Domain']/*[local-name()='mRID']")
+        # Flat elements (<in_Domain.mRID>), not nested -- the old nested xpath never
+        # matched, which silently dropped the net-position flow direction.
+        in_domain = _first_text(ts, ".//*[local-name()='in_Domain.mRID']")
+        out_domain = _first_text(ts, ".//*[local-name()='out_Domain.mRID']")
         currency = _first_text(ts, ".//*[local-name()='currency_Unit.name']")
         measure_unit = _first_text(ts, ".//*[local-name()='measurement_Unit.name']")
 
@@ -212,8 +214,10 @@ def parse_timeseries_points(xml_bytes: bytes) -> pd.DataFrame:
 
     df = pd.DataFrame(rows).set_index("time_utc").sort_index()
 
-    # In case duplicates, keep the last
-    df = df[~df.index.duplicated(keep="last")]
+    # In case duplicates, keep the last. Callers whose TimeSeries legitimately share
+    # timestamps (net position: one series per flow direction) pass dedupe=False.
+    if dedupe:
+        df = df[~df.index.duplicated(keep="last")]
     return df
 
 
@@ -435,7 +439,24 @@ def fetch_net_position_dk1(
         }
 
         xml_bytes = client.get(params)
-        part = parse_timeseries_points(xml_bytes)
+        part = parse_timeseries_points(xml_bytes, dedupe=False)
+
+        # ENTSO-E reports net position as non-negative quantities in one TimeSeries
+        # per flow direction: out_Domain = DK1 means energy flows out of DK1 (export,
+        # +), in_Domain = DK1 means it flows in (import, -). Sum per timestamp so an
+        # hour covered by both directions nets out instead of one being dropped.
+        if len(part):
+            is_export = part["out_Domain"] == DK1_BZN
+            is_import = part["in_Domain"] == DK1_BZN
+            ambiguous = is_export == is_import
+            if ambiguous.any():
+                raise ValueError(
+                    f"{int(ambiguous.sum())} net-position points have no single DK1 flow "
+                    f"direction (in/out_Domain: "
+                    f"{part.loc[ambiguous, ['in_Domain', 'out_Domain']].drop_duplicates().values.tolist()})"
+                )
+            part["value"] = part["value"].where(is_export, -part["value"])
+            part = part.groupby(level=0).agg({"value": "sum", "businessType": "first"})
 
         print(f"  got {len(part)} rows")
         all_parts.append(part)
