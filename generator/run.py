@@ -103,7 +103,7 @@ def generate(cfg: Config, fitted: dict, device: torch.device) -> pd.DataFrame:
         buf = load_wind_speed_seed(cfg.paths.data_dir, k_lags, norm_mean, norm_std)
         sim_df = run_transformer_simulation(
             transformer, wind_pkl["norm_stats"], K_wind, mapper, buf,
-            cfg.horizon_hours, BURN_IN, rng, device,
+            df_idx.index, BURN_IN, rng, device,
         )
         wind_speed = sim_df[WIND_COL].values
 

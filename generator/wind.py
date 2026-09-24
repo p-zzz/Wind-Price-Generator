@@ -153,13 +153,22 @@ def run_transformer_simulation(
     K: int,
     mapper: WindQuantileMapper,
     buf: list,
-    n_hours: int,
+    index: pd.DatetimeIndex,
     burn_in: int,
     rng: np.random.Generator,
     device: torch.device,
 ) -> pd.DataFrame:
     """Free-running autoregressive simulation, burn_in steps discarded. buf is the
-    AR lag buffer (already normalised), most-recent-last; mutated in place."""
+    AR lag buffer (already normalised), most-recent-last; mutated in place.
+
+    index is the simulation's own hourly Europe/Copenhagen index (build_sim_index),
+    so wind calendar features and quantile-mapper bins line up hour-for-hour with
+    solar, load and price. The Transformer and mapper were trained on Copenhagen
+    local-time hour/month, so DST is handled by construction: the index steps in
+    absolute hours and ts.hour is the local wall-clock hour, exactly as in training.
+    Leap days need no special case -- calendar features use only month and hour."""
+    if str(index.tz) != "Europe/Copenhagen":
+        raise ValueError(f"index must be tz-aware Europe/Copenhagen, got tz={index.tz}")
     model.eval()
     norm_floor = float(-norm_stats["mean"] / norm_stats["std"])
 
@@ -184,12 +193,12 @@ def run_transformer_simulation(
         sample = float(rng.normal(mu_np[k], sg_np[k]))
         return max(sample, norm_floor)
 
+    # Burn-in runs over the burn_in hours immediately preceding index[0], so the
+    # AR state has warmed up under the right season when the kept path starts.
     burn_idx = pd.date_range(
-        pd.Timestamp("2029-01-01", tz="Europe/Copenhagen"), periods=burn_in, freq="h"
+        end=index[0] - pd.Timedelta(hours=1), periods=burn_in, freq="h"
     )
-    synth_index = pd.date_range(
-        pd.Timestamp("2030-01-01", tz="Europe/Copenhagen"), periods=n_hours, freq="h"
-    )
+    synth_index = index
 
     with torch.no_grad():
         for ts in burn_idx:
