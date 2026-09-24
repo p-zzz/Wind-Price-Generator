@@ -33,9 +33,12 @@ python -m generator.run --config config/example.yaml
 
 Output: a CSV under `outputs/` with hourly `wind_speed_ms`, `wind_generation_MW`,
 `solar_generation_MW`, `actual_load_MW`, `net_position_MW`, `gas_price_eur_mwh`,
-and `day_ahead_price` columns, plus a printed validation table (marginal stats +
-Spearman(wind speed, price), which should land near -0.45 in the post-crisis
-regime -- see "Known limitations" below for when it won't).
+and `day_ahead_price` columns, plus a printed validation table: marginal stats,
+and Spearman(wind speed, price) over all hours and per gas regime. Expect it to
+be negative -- the merit-order effect (more wind, lower price) is preserved --
+but its strength depends on which inputs the price model sees (gas mode and
+noise, scale knobs, regime mix), so there is no single target value; compare
+per regime rather than the pooled figure.
 
 Edit `config/example.yaml` to change the horizon, random seed, `wind.scale`/
 `solar.scale` (multipliers on installed capacity), and the gas price schedule.
@@ -91,7 +94,8 @@ in-domain range this is trustworthy over.
   the gas market itself. Internal testing found that layering AR(1)/deviation-
   bootstrap noise onto gas (the stochastic ingredient behind trajectory mode)
   measurably weakens the wind-price merit-order correlation relative to a flat
-  gas level, worst in the crisis regime (ρ -0.45 -> -0.38 vs. a real -0.54).
+  gas level, most of all in the crisis regime, where it already falls short of
+  the observed correlation.
   Prefer flat mode over trajectory mode when the wind-price correlation is
   what you actually care about getting right, at the cost of std -- flat gas
   undershoots the real crisis-regime price std (107 vs. a real 145) that the

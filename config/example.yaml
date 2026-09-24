@@ -32,10 +32,14 @@ gas:
     regime: "post_crisis"        # [pre_crisis, crisis, post_crisis, custom]
     custom_eur_mwh: 40.0          # used only if regime: "custom"
   trajectory:
+    # Sums to the 5-year horizon: ramps into a crisis and back out. The validation
+    # printout reports Spearman(wind, price) per regime as well as overall, since
+    # pooling regimes with different price levels dilutes it. Segments past
+    # horizon_hours are ignored; a schedule shorter than it holds the last level.
     segments:
-      - {regime: "pre_crisis", years: 5}
-      - {regime: "crisis", years: 2}
-      - {regime: "post_crisis", years: 10}
+      - {regime: "post_crisis", years: 1}
+      - {regime: "crisis", years: 1}
+      - {regime: "post_crisis", years: 3}
     ramp_hours: 720                # linear ramp duration between regimes (hours)
     noise_std: 3.0                 # AR(1) innovation std (EUR/MWh)
     noise_ar: 0.99                 # AR(1) coefficient

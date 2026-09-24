@@ -10,7 +10,7 @@ from pathlib import Path
 
 from generator.config import Config, GasConfig, GasFlatConfig, GasTrajectoryConfig, PathsConfig, SolarConfig, WindConfig
 from generator.io import load_fitted_objects
-from generator.run import generate, get_device, print_validation, save_scenarios
+from generator.run import gas_regimes_for, generate, get_device, print_validation, save_scenarios
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -37,5 +37,5 @@ cfg = Config(
 device = get_device()
 fitted = load_fitted_objects(cfg.paths.fitted_models_dir, device)
 df_scenarios = generate(cfg, fitted, device)
-print_validation(df_scenarios)
+print_validation(df_scenarios, gas_regimes_for(cfg))
 save_scenarios(df_scenarios, cfg.paths.output_dir)

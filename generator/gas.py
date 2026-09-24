@@ -14,6 +14,20 @@ GAS_LEVELS = {
 }
 
 
+def _walk_segments(n_hours: int, segments: list[dict]) -> tuple[list, int]:
+    """(start, end, regime) per segment in order, clipped to n_hours, plus the hour
+    the schedule itself ends (>= n_hours when the segments cover the horizon)."""
+    walked = []
+    hour = 0
+    for seg in segments:
+        seg_hours = int(seg["years"] * 8760)
+        walked.append((hour, min(hour + seg_hours, n_hours), seg["regime"]))
+        hour += seg_hours
+        if hour >= n_hours:
+            break
+    return walked, hour
+
+
 def build_gas_trajectory(
     n_hours: int,
     segments: list[dict],
@@ -27,16 +41,8 @@ def build_gas_trajectory(
     padded/trimmed to n_hours. Linear ramp of ramp_hours between each segment's
     level, AR(1) noise on top, clipped at noise_floor."""
     levels = np.zeros(n_hours)
-    hour = 0
-    regime_segments = []
-
-    for seg in segments:
-        seg_hours = int(seg["years"] * 8760)
-        level = GAS_LEVELS[seg["regime"]]
-        regime_segments.append((hour, min(hour + seg_hours, n_hours), level))
-        hour += seg_hours
-        if hour >= n_hours:
-            break
+    walked, hour = _walk_segments(n_hours, segments)
+    regime_segments = [(start, end, GAS_LEVELS[regime]) for start, end, regime in walked]
 
     for i, (start, end, level) in enumerate(regime_segments):
         if i == 0:
@@ -59,6 +65,21 @@ def build_gas_trajectory(
 
     trajectory = np.clip(levels + noise, noise_floor, None)
     return trajectory.astype(np.float32)
+
+
+def gas_regime_labels(n_hours: int, segments: list[dict], ramp_hours: int) -> np.ndarray:
+    """Per-hour regime name for a trajectory, matching build_gas_trajectory's
+    schedule. Ramp hours between two different regimes are labelled "transition"
+    so they don't blur either regime's statistics."""
+    walked, hour = _walk_segments(n_hours, segments)
+    labels = np.empty(n_hours, dtype=object)
+    for i, (start, end, regime) in enumerate(walked):
+        labels[start:end] = regime
+        if i > 0 and walked[i - 1][2] != regime:
+            labels[start : min(start + ramp_hours, end)] = "transition"
+    if hour < n_hours:
+        labels[hour:] = walked[-1][2]
+    return labels
 
 
 def flat_gas_price(regime: str, custom_eur_mwh: float | None = None) -> float:

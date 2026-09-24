@@ -24,7 +24,7 @@ import torch
 from statsmodels.tsa.stattools import acf as sm_acf
 
 from .config import Config
-from .gas import build_gas_trajectory, flat_gas_price
+from .gas import build_gas_trajectory, flat_gas_price, gas_regime_labels
 from .io import load_bootstrap_source, load_fitted_objects, load_wind_speed_seed
 from .bootstrap import paired_block_bootstrap
 from .price import simulate_price_mdn
@@ -65,6 +65,15 @@ def _gas_price_for_run(cfg: Config, n_hours: int, rng: np.random.Generator):
     )
     label = f"trajectory  mean={price.mean():.1f}  min={price.min():.1f}  max={price.max():.1f} EUR/MWh"
     return price, label
+
+
+def gas_regimes_for(cfg: Config) -> np.ndarray:
+    """Per-hour gas regime label for cfg's horizon (for print_validation)."""
+    if cfg.gas.mode == "flat":
+        return np.full(cfg.horizon_hours, cfg.gas.flat.regime, dtype=object)
+    return gas_regime_labels(
+        cfg.horizon_hours, cfg.gas.trajectory.segments, cfg.gas.trajectory.ramp_hours
+    )
 
 
 def generate(cfg: Config, fitted: dict, device: torch.device) -> pd.DataFrame:
@@ -176,8 +185,13 @@ def _price_metrics(price: np.ndarray, idx: pd.DatetimeIndex) -> dict:
     }
 
 
-def print_validation(df_scenarios: pd.DataFrame) -> None:
+def print_validation(df_scenarios: pd.DataFrame, gas_regimes: np.ndarray | None = None) -> None:
+    """gas_regimes: optional per-hour regime labels (gas_regimes_for(cfg)), shared
+    by every path. When given, Spearman(wind speed, price) is also reported per
+    regime, since pooling regimes with different price levels dilutes it."""
     wind_m, price_m, rho_vals = [], [], []
+    regime_order = list(dict.fromkeys(gas_regimes)) if gas_regimes is not None else []
+    rho_by_regime = {r: [] for r in regime_order}
     for path in sorted(df_scenarios["path"].unique()):
         sub = df_scenarios[df_scenarios["path"] == path]
         wind = sub["wind_speed_ms"].values
@@ -186,6 +200,10 @@ def print_validation(df_scenarios: pd.DataFrame) -> None:
         price_m.append(_price_metrics(price, sub.index))
         rho, _ = stats.spearmanr(wind, price)
         rho_vals.append(float(rho))
+        for regime in regime_order:
+            mask = gas_regimes == regime
+            rho, _ = stats.spearmanr(wind[mask], price[mask])
+            rho_by_regime[regime].append(float(rho))
 
     def _row(key, rows):
         vals = [r[key] for r in rows]
@@ -197,11 +215,12 @@ def print_validation(df_scenarios: pd.DataFrame) -> None:
     print("\n------ Price ------")
     for key in price_m[0]:
         print(_row(key, price_m))
-    print("\n------ Joint ------")
-    print(
-        f"  {'Spearman(wind speed, price)':<25} {np.mean(rho_vals):>10.3f}"
-        f"  +/-{np.std(rho_vals):.3f}  (target ~= -0.45, post-crisis regime)"
-    )
+    print("\n------ Joint: Spearman(wind speed, price) ------")
+    print(f"  {'all hours':<25} {np.mean(rho_vals):>10.3f}  +/-{np.std(rho_vals):.3f}")
+    for regime in regime_order:
+        vals = rho_by_regime[regime]
+        label = f"gas={regime} ({int((gas_regimes == regime).sum())} h)"
+        print(f"  {label:<25} {np.mean(vals):>10.3f}  +/-{np.std(vals):.3f}")
 
 
 def save_scenarios(df_scenarios: pd.DataFrame, output_dir: Path) -> Path:
@@ -234,7 +253,7 @@ def main() -> None:
     df_scenarios = generate(cfg, fitted, device)
 
     print("\n------ Validation ------")
-    print_validation(df_scenarios)
+    print_validation(df_scenarios, gas_regimes_for(cfg))
 
     print("\n------ Saving scenarios ------")
     save_scenarios(df_scenarios, cfg.paths.output_dir)
