@@ -29,8 +29,15 @@ real Horns Rev history and compared with each site's real ERA5 wind:
 
 | | Thor (offshore) | Ringkøbing (coast) | Herning (inland) |
 |---|---|---|---|
-| Gross capacity factor: true / site model / Horns Rev as the site | 0.616 / 0.615 / 0.599 | 0.563 / 0.563 / 0.599 | 0.449 / 0.450 / **0.599** |
+| Gross capacity factor\*: true / site model / Horns Rev as the site | 0.616 / 0.615 / 0.599 | 0.563 / 0.563 / 0.599 | 0.449 / 0.450 / **0.599** |
 | Farm power vs Horns Rev power, correlation: true / site model | 0.87 / 0.85 | 0.91 / 0.90 | 0.79 / 0.76 |
+
+\* **Gross** capacity factor: the wind run through a generic turbine power curve
+(cut-in 3 m/s, rated at 11 m/s, cut-out 25 m/s) with **no** wake, availability or
+electrical losses. It is only a yardstick for comparing wind series, not a farm's
+expected capacity factor; real offshore farms reach about 45-55% net. (It is not
+bounded by Betz's limit, which caps the share of the wind's energy a rotor extracts,
+not the ratio of energy produced to rated power x hours.)
 
 Using Horns Rev wind as the site's wind gets the **energy** wrong: it overstates
 Herning by a third. It also puts the farm in perfect lockstep with the system wind

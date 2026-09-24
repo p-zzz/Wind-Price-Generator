@@ -61,7 +61,7 @@ p0 = scenarios[scenarios["path"] == 0]
 ```
 
 The columns, units and time conventions are listed in
-{doc}`../user_guide/outputs`. Two things new users most often get wrong:
+{doc}`../user_guide/outputs`. Two points worth keeping in mind:
 
 - `wind_speed_ms` is **10 m** wind at one offshore point (Horns Rev), the price
   model's system wind. For a farm's power, use `site_wind_speed_hub_ms` with a
