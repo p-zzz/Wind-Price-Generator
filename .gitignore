@@ -9,3 +9,7 @@ DATA/
 analysis/
 
 .DS_Store
+
+# Sphinx build output
+docs/_build/
+docs/api/_generated/
