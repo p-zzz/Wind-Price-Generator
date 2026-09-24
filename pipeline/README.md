@@ -38,7 +38,9 @@ pipeline/validate/   ->  DATA/synthetic/... + analysis/outputs/... (sanity-check
    These make real external API calls; nothing here runs them for you.
 2. `build/build_price_dataset.py`, `build/era5_sites_builder.py`,
    `build/build_features.py` -- assemble the downloaded raw data into the
-   processed parquets the training scripts expect.
+   processed parquets the training scripts expect. `era5_sites_builder.py`
+   extracts the wind at every site in `config/sites.yaml` (the download script
+   calls it too); rerun it alone after adding a site inside the ERA5 box.
 3. `train/wind_transformer.py`, `train/wind_capacity_factor_arma.py`,
    `train/solar_model_capacity_factor.py`, `train/price_mdn_v11.py` -- the
    actual fitting/training scripts, unmodified from the thesis repo. Each

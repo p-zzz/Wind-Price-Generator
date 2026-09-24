@@ -1,14 +1,18 @@
-"""
-Wind stack: Transformer (wind speed, m/s) + capacity-factor ARMA (onshore/offshore,
-generation MW). Extracted from the thesis repo's models/wind/wind_transformer.py and
-models/wind/wind_capacity_factor_arma.py -- training/tuning/comparison code stripped,
-simulation-only classes and functions kept verbatim.
+"""Wind: 10 m wind speed (Transformer), fleet generation (CF ARMA), hub-height wind.
 
-wind_speed_ms feeds the price model's merit-order channel directly and unscaled --
-WIND_SCALE never touches it (scaling wind speed has no physical meaning as a capacity
-proxy). wind_generation_MW is a separate, independently-scaled stream: simulated
-capacity factor (onshore/offshore ARMA + quantile mapper) x target installed capacity,
-where WIND_SCALE multiplies the configured onshore/offshore capacity baseline.
+Two separate streams:
+
+* ``wind_speed_ms`` -- hourly 10 m wind speed at the Horns Rev ERA5 point, from an
+  autoregressive Transformer mixture model plus a seasonal Weibull quantile mapper.
+  It feeds the price model directly and is never scaled: ``wind.scale`` multiplies
+  capacity, not wind speed.
+* ``wind_generation_MW`` -- DK1 onshore + offshore fleet output: simulated capacity
+  factor (conditioned on the same wind speed) x installed capacity x ``wind.scale``.
+
+`hub_height_wind_speed` converts the 10 m wind to turbine hub height for output only.
+Simulation code is extracted from the thesis repo's ``models/wind/`` scripts
+(training code stripped); the classes stay importable under their original module
+names so the fitted pickles load (`generator.io`).
 """
 
 import math
@@ -19,6 +23,7 @@ import scipy.stats as stats
 import torch
 import torch.nn as nn
 
+#: Name of the 10 m Horns Rev wind-speed series in the fitted models and data files.
 WIND_COL = "horns_rev_wind_speed_10m_ms"
 
 
@@ -158,15 +163,50 @@ def run_transformer_simulation(
     rng: np.random.Generator,
     device: torch.device,
 ) -> pd.DataFrame:
-    """Free-running autoregressive simulation, burn_in steps discarded. buf is the
-    AR lag buffer (already normalised), most-recent-last; mutated in place.
+    """Simulate hourly 10 m wind speed at Horns Rev on the given calendar.
 
-    index is the simulation's own hourly Europe/Copenhagen index (build_sim_index),
-    so wind calendar features and quantile-mapper bins line up hour-for-hour with
-    solar, load and price. The Transformer and mapper were trained on Copenhagen
-    local-time hour/month, so DST is handled by construction: the index steps in
-    absolute hours and ts.hour is the local wall-clock hour, exactly as in training.
-    Leap days need no special case -- calendar features use only month and hour."""
+    Parameters
+    ----------
+    model : torch.nn.Module
+        Fitted `WindTransformerMDN`.
+    norm_stats : dict
+        ``{"mean", "std"}`` wind-speed normalisation, m/s.
+    K : int
+        Number of mixture components of ``model``.
+    mapper : WindQuantileMapper
+        Maps the raw simulated path onto the climatological Weibull distribution
+        per season x 6-hour block.
+    buf : list of float
+        Normalised lag buffer, oldest first (`generator.io.load_wind_speed_seed`).
+        **Mutated in place.**
+    index : pandas.DatetimeIndex
+        Hourly, tz-aware Europe/Copenhagen simulation calendar
+        (`generator.run.build_sim_index`).
+    burn_in : int
+        Hours simulated before ``index[0]`` and discarded, so the path starts from
+        an in-season state.
+    rng : numpy.random.Generator
+        Draws the mixture component and the Gaussian sample every hour.
+    device : torch.device
+
+    Returns
+    -------
+    pandas.DataFrame
+        One column `WIND_COL`, m/s, indexed by ``index``.
+
+    Raises
+    ------
+    ValueError
+        If ``index`` is not tz-aware Europe/Copenhagen.
+
+    Notes
+    -----
+    Model and mapper were trained on local-time hour and month, so DST is handled by
+    construction (absolute-hour steps, local wall-clock features); leap days need no
+    special case. The quantile mapper ranks each path over its whole horizon, so every
+    path has the same climatological distribution per season x block: a run cannot
+    produce an unusually windy or calm period overall.
+    """
     if str(index.tz) != "Europe/Copenhagen":
         raise ValueError(f"index must be tz-aware Europe/Copenhagen, got tz={index.tz}")
     model.eval()
@@ -284,9 +324,31 @@ def simulate_wind_cf(
     burn_in: int,
     rng: np.random.Generator,
 ) -> np.ndarray:
-    """Mean model conditions on wind speed (in addition to calendar) -- ties the
-    CF simulation to the already-simulated wind_speed_ms path instead of drawing
-    an independent, uncorrelated process."""
+    """Simulate an hourly wind capacity factor (onshore or offshore fleet).
+
+    Seasonal mean conditioned on calendar and the simulated wind speed, plus an
+    ARMA residual, then an empirical quantile mapper per season x 6-hour block.
+    Conditioning on wind speed ties generation to the same wind path the price
+    model sees.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Simulation calendar (`generator.run.build_sim_index`).
+    cf_pkl : dict
+        Fitted onshore or offshore CF model (`generator.io.load_fitted_objects`).
+    wind_speed_ms : numpy.ndarray, shape (n_hours,)
+        Simulated 10 m wind speed, m/s.
+    burn_in : int
+        ARMA hours discarded at the start.
+    rng : numpy.random.Generator
+        Seeds the ARMA residual simulation.
+
+    Returns
+    -------
+    numpy.ndarray, shape (n_hours,)
+        Capacity factor, fraction of installed capacity in [0, 1].
+    """
     mean_model = cf_pkl["mean_model"]
     monthly_std = cf_pkl["monthly_std"]
     arma_model = cf_pkl["arma_model"]
@@ -315,13 +377,33 @@ def simulate_wind_generation(
     burn_in: int,
     rng: np.random.Generator,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """scale: either a single float (unified wind scale, onshore + offshore) or a
-    {"onshore": x, "offshore": y} dict for independent per-component scaling.
+    """Simulate DK1 onshore and offshore wind generation at scaled capacity.
 
-    Returns (gen_onshore_MW, gen_offshore_MW, gen_total_MW, cf_onshore, cf_offshore).
-    The raw (unscaled) capacity factors are also returned so callers can build a
-    scale-invariant wind_gen_ratio by re-weighting with the *baseline* capacity
-    split rather than the scenario's scaled one."""
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Simulation calendar (`generator.run.build_sim_index`).
+    cf_onshore_pkl, cf_offshore_pkl : dict
+        Fitted CF models (`generator.io.load_fitted_objects`).
+    capacity_baseline : dict
+        ``{"onshore": MW, "offshore": MW}`` installed capacity.
+    scale : float or dict
+        Capacity multiplier: one float for both, or ``{"onshore": x, "offshore": y}``.
+        Scales capacity only -- the capacity factors and wind speed are unchanged.
+    wind_speed_ms : numpy.ndarray, shape (n_hours,)
+        Simulated 10 m wind speed, m/s.
+    burn_in : int
+        ARMA hours discarded at the start.
+    rng : numpy.random.Generator
+        Consumed identically for any ``scale``.
+
+    Returns
+    -------
+    gen_onshore, gen_offshore, gen_total : numpy.ndarray, shape (n_hours,)
+        Generation, MW.
+    cf_onshore, cf_offshore : numpy.ndarray, shape (n_hours,)
+        Unscaled capacity factors in [0, 1].
+    """
     if isinstance(scale, dict):
         scale_onshore, scale_offshore = scale["onshore"], scale["offshore"]
     else:
@@ -345,10 +427,35 @@ def hub_height_wind_speed(
     hub_height_m: float,
     shear: pd.DataFrame,
 ) -> np.ndarray:
-    """Power-law extrapolation v_hub = v10 * (hub_height_m / 10) ** alpha, with alpha
-    looked up per calendar month x 10 m speed band from shear (load_shear_table()),
-    measured from ERA5's 10 m / 100 m pair at Horns Rev. Only an output transform --
-    every model (Transformer, CF ARMA, price MDN) runs on the 10 m wind."""
+    """Extrapolate the 10 m wind speed to turbine hub height.
+
+    ``v_hub = v10 * (hub_height_m / 10) ** alpha``, with ``alpha`` looked up per
+    calendar month x 10 m wind-speed band.
+
+    Parameters
+    ----------
+    wind_speed_10m : numpy.ndarray, shape (n_hours,)
+        10 m wind speed, m/s.
+    index : pandas.DatetimeIndex
+        Local-time calendar of ``wind_speed_10m`` (for the month).
+    hub_height_m : float
+        Hub height, m.
+    shear : pandas.DataFrame
+        Shear table (`generator.io.load_shear_table`).
+
+    Returns
+    -------
+    numpy.ndarray, shape (n_hours,)
+        Hub-height wind speed, m/s.
+
+    Notes
+    -----
+    ``alpha`` is measured from ERA5's own 10 m / 100 m wind at Horns Rev, 1990-2026
+    (about 0.10 on average, 0.05-0.12 by cell; unbiased on 100 m mean speed). Output
+    only: every model runs on the 10 m wind. Valid offshore in the Danish North Sea;
+    it is not an onshore site's wind. A generic exponent such as 0.2 overstates
+    offshore hub-height wind by about a third.
+    """
     months = np.asarray(index.month)
     alpha = np.full(len(wind_speed_10m), np.nan)
     for row in shear.itertuples():
@@ -357,3 +464,108 @@ def hub_height_wind_speed(
     if np.isnan(alpha).any():
         raise ValueError("shear table does not cover every month x wind-speed band")
     return wind_speed_10m * (hub_height_m / 10.0) ** alpha
+
+
+# ------ Wind at a chosen farm site ------
+
+
+def _hour_block_cells(index: pd.DatetimeIndex, per_day: int = 4) -> np.ndarray:
+    """Cell id per hour: month x ``per_day`` equal blocks of the local day
+    (``per_day=24``: month x hour, 0..287; ``per_day=4``: month x 6-hour block)."""
+    return per_day * (np.asarray(index.month) - 1) + np.asarray(index.hour) // (24 // per_day)
+
+
+def _lagged(u: np.ndarray, lags) -> np.ndarray:
+    """(n, len(lags)) matrix of u shifted by each lag (u[t - lag]), edge-padded."""
+    n = len(u)
+    out = np.empty((n, len(lags)))
+    for j, lag in enumerate(lags):
+        src = np.clip(np.arange(n) - lag, 0, n - 1)
+        out[:, j] = u[src]
+    return out
+
+
+def site_wind_speed(
+    system_wind_10m: np.ndarray,
+    index: pd.DatetimeIndex,
+    site_model: dict,
+    hub_height_m: float,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Wind at a farm site, hour by hour, consistent with the simulated system wind.
+
+    Gaussian copula per calendar month x local hour, fitted on decades of paired ERA5
+    hours (``scripts/build_site_model.py``): the system (Horns Rev) 10 m wind is turned
+    into normal scores, the site's score is a regression on the system scores over a
+    window of hours around ``t`` (so weather reaching inland sites hours after Horns Rev
+    is reproduced) plus an AR(1) process (the site's own, persistent deviations), and
+    the score is mapped back through the site's own 100 m wind distribution. The
+    100 m wind is then taken to hub height with the site's ERA5-measured shear.
+
+    Parameters
+    ----------
+    system_wind_10m : numpy.ndarray, shape (n_hours,)
+        Simulated system (Horns Rev) 10 m wind speed, m/s -- the generator's
+        ``wind_speed_ms``.
+    index : pandas.DatetimeIndex
+        Local-time calendar of ``system_wind_10m``.
+    site_model : dict
+        Fitted site model (`generator.io.load_site_model`).
+    hub_height_m : float
+        Hub height at the site, m.
+    rng : numpy.random.Generator
+        Draws the site's own deviations (one normal per hour, plus one to start).
+
+    Returns
+    -------
+    numpy.ndarray, shape (n_hours,)
+        Wind speed at the site and hub height, m/s.
+
+    Notes
+    -----
+    The site keeps its own climatological distribution (per month x hour), moves
+    together with the system wind as much as the real weather does, including the
+    delay with which fronts reach it, and its local deviations persist from hour to
+    hour (AR(1) coefficient ``phi``). ERA5's ~0.25 deg grid point stands in for the site.
+    """
+    from scipy.special import ndtr, ndtri   # standard normal CDF and its inverse
+
+    probs = np.asarray(site_model["probs"])
+    q_x, q_y = np.asarray(site_model["q_system_10m"]), np.asarray(site_model["q_site_100m"])
+    per_day = q_x.shape[1]                 # 24 (month x hour) or 4 (older 6-hour-block files)
+    cells = _hour_block_cells(index, per_day)
+    months = np.asarray(index.month) - 1
+
+    u = np.empty(len(system_wind_10m))
+    for c in np.unique(cells):
+        m, b = divmod(c, per_day)
+        mask = cells == c
+        u[mask] = ndtri(np.interp(system_wind_10m[mask], q_x[m, b], probs))
+
+    if "beta" in site_model:               # lagged regression on the system scores
+        lags = site_model["lags"]
+        beta = np.asarray(site_model["beta"])[months]          # (n, n_lags)
+        signal = (_lagged(u, lags) * beta).sum(axis=1)
+    else:                                  # older files: same-hour correlation only
+        signal = np.asarray(site_model["rho"])[months] * u
+
+    phi = float(site_model["phi"])
+    e_std = np.asarray(site_model["e_std"])[months]
+    innov = rng.standard_normal(len(u)) * e_std * np.sqrt(1.0 - phi**2)
+    e = np.empty(len(u))
+    e[0] = rng.standard_normal() * e_std[0]
+    for t in range(1, len(u)):
+        e[t] = phi * e[t - 1] + innov[t]
+    w = signal + e
+
+    v100 = np.empty(len(u))
+    p = ndtr(w)
+    for c in np.unique(cells):
+        m, b = divmod(c, per_day)
+        mask = cells == c
+        v100[mask] = np.interp(p[mask], probs, q_y[m, b])
+
+    edges = np.asarray(site_model["shear_v100_edges"], dtype=float)
+    band = np.clip(np.searchsorted(edges, v100, side="right") - 1, 0, len(edges) - 2)
+    alpha = np.asarray(site_model["shear_alpha"])[months, band]
+    return v100 * (hub_height_m / 100.0) ** alpha

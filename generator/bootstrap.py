@@ -1,9 +1,9 @@
-"""
-Paired block bootstrap for load and net position -- drawn directly from real
-historical data (data/bootstrap_pool.parquet), not a fitted parametric model.
-"Paired" means both series are resampled from the same randomly chosen blocks, so
-their real historical co-movement (e.g. cold snaps driving both load and imports up)
-is preserved.
+"""Paired, calendar-conditioned block bootstrap for load and net position.
+
+Drawn directly from real historical data (data/bootstrap_pool.parquet), not a
+fitted parametric model. "Paired" means both series are resampled from the same
+randomly chosen blocks, so their real historical co-movement (e.g. cold snaps
+driving both load and imports up) is preserved.
 
 Calendar-conditioned: each block is drawn from pool start hours with the same local
 hour-of-day and a day-of-year within +/- window_days of the simulated timestamp it
@@ -44,9 +44,43 @@ def paired_block_bootstrap(
     window_days: int,
     rng: np.random.Generator,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """s1/s2 are aligned to pool_index, a gap-free hourly index (missing hours as
-    NaN, see load_bootstrap_source). Blocks that would cross a NaN are never drawn,
-    so no gap-filling is needed."""
+    """Resample two historical series together, in calendar-matched blocks.
+
+    Parameters
+    ----------
+    s1, s2 : numpy.ndarray, shape (n_pool,)
+        Series aligned to ``pool_index`` (load and net position, MW); missing hours
+        are NaN (`generator.io.load_bootstrap_source`).
+    pool_index : pandas.DatetimeIndex
+        Gap-free hourly Europe/Copenhagen index of the pool.
+    sim_index : pandas.DatetimeIndex
+        Simulation calendar to fill (`generator.run.build_sim_index`).
+    block_size : int
+        Maximum block length, hours.
+    window_days : int
+        A block for simulated time ``t`` starts at a pool hour with the same local
+        hour of day and a day of year within +/- ``window_days`` of ``t``.
+    rng : numpy.random.Generator
+        Picks one block start per block.
+
+    Returns
+    -------
+    r1, r2 : numpy.ndarray, shape (len(sim_index),)
+        Resampled series, MW.
+
+    Raises
+    ------
+    ValueError
+        If ``block_size`` exceeds the pool, or no gap-free candidate block exists
+        for some hour (widen ``window_days`` or shrink ``block_size``).
+
+    Notes
+    -----
+    Blocks never cross a NaN (no gap filling) or a DST change, in the pool or the
+    simulation; they are cut short at simulated DST transitions. Output can only
+    contain values that occurred in 2023-2025, so a load or net-position regime
+    that never happened then can't appear.
+    """
     n_pool = len(pool_index)
     n_hours = len(sim_index)
     if block_size > n_pool:

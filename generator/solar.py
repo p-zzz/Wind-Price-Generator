@@ -1,13 +1,10 @@
-"""
-Solar: capacity-factor shape model (deterministic seasonal mean, no stochastic
-residual -- a documented limitation, see README "Known limitations"). Extracted
-from joint_generator.py; the fitted pkl (models/solar_cf.pkl) needs no custom
-classes to unpickle (mean_model is a plain statsmodels OLS, day_pairs a plain set).
+"""Solar: DK1 fleet capacity factor (deterministic seasonal-mean shape).
 
-solar_cf feeds the price model directly and unscaled -- SOLAR_SCALE never touches
-it, for the same reason WIND_SCALE never touches wind_speed_ms (see generator/wind.py).
-solar_MW = solar_cf x target installed solar capacity x SOLAR_SCALE is the separate,
-independently-scaled stream.
+``solar_generation_MW = simulate_solar_cf(...) x capacity_mw x solar.scale``. The
+price model sees solar through ``solar_load_ratio`` (that scaled MW / load), so
+``solar.scale`` moves price. The fitted model (``models/solar_cf.pkl``) is a plain
+statsmodels OLS of capacity factor on hour x month plus the set of (month, hour)
+pairs that count as daytime.
 """
 
 import numpy as np
@@ -22,6 +19,27 @@ def _make_day_mask(index: pd.DatetimeIndex, day_pairs: set) -> np.ndarray:
 
 
 def simulate_solar_cf(df: pd.DataFrame, solar_pkl: dict) -> np.ndarray:
+    """Solar capacity factor for every hour of the simulation calendar.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Simulation calendar with ``hour`` and ``month`` columns
+        (`generator.run.build_sim_index`).
+    solar_pkl : dict
+        Fitted solar model (`generator.io.load_fitted_objects`).
+
+    Returns
+    -------
+    numpy.ndarray, shape (n_hours,)
+        Capacity factor in [0, 1] (clipped at 0); exactly 0 at night.
+
+    Warnings
+    --------
+    Deterministic: the same for every path and every seed, with no cloud-driven
+    day-to-day variability. Solar output is the seasonal-mean shape only; see README
+    "Known limitations".
+    """
     mean_model = solar_pkl["mean_model"]
     day_pairs = solar_pkl["day_pairs"]
     n = len(df)

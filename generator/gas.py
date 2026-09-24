@@ -1,12 +1,12 @@
-"""
-Gas price: either a flat level (a real historical regime mean, or a custom value)
-or a multi-regime trajectory (linear ramps + AR(1) noise) over the simulation
-horizon. No fitted model -- this is a config-driven schedule, not a market model
-of gas itself (see README "Known limitations").
+"""Gas price schedule (TTF, EUR/MWh): a flat level or a multi-regime trajectory.
+
+No fitted model: gas doesn't respond to anything in the simulation. See README
+"Known limitations" for how trajectory noise weakens the wind-price correlation.
 """
 
 import numpy as np
 
+#: TTF gas price level per historical regime, EUR/MWh (regime means, rounded).
 GAS_LEVELS = {
     "pre_crisis": 35.0,
     "crisis": 150.0,
@@ -37,9 +37,33 @@ def build_gas_trajectory(
     noise_floor: float,
     rng: np.random.Generator,
 ) -> np.ndarray:
-    """segments: list of {"regime": str, "years": float}, walked in order and
-    padded/trimmed to n_hours. Linear ramp of ramp_hours between each segment's
-    level, AR(1) noise on top, clipped at noise_floor."""
+    """Multi-regime gas price path: regime levels, linear ramps, AR(1) noise.
+
+    Parameters
+    ----------
+    n_hours : int
+        Length of the path.
+    segments : list of dict
+        ``{"regime": str, "years": float}`` in order (1 year = 8760 h; regimes from
+        `GAS_LEVELS`). Trimmed to ``n_hours``; a shorter schedule holds its last
+        level. Must not be empty.
+    ramp_hours : int
+        Linear ramp from the previous level at the start of each later segment.
+    noise_std : float
+        Stationary standard deviation of the AR(1) noise, EUR/MWh (innovations are
+        scaled by ``sqrt(1 - noise_ar**2)``). The noise starts at 0.
+    noise_ar : float
+        AR(1) coefficient.
+    noise_floor : float
+        Lower bound on the result, EUR/MWh.
+    rng : numpy.random.Generator
+        Draws the noise (``n_hours - 1`` normals).
+
+    Returns
+    -------
+    numpy.ndarray of float32, shape (n_hours,)
+        Gas price, EUR/MWh.
+    """
     levels = np.zeros(n_hours)
     walked, hour = _walk_segments(n_hours, segments)
     regime_segments = [(start, end, GAS_LEVELS[regime]) for start, end, regime in walked]
@@ -68,9 +92,19 @@ def build_gas_trajectory(
 
 
 def gas_regime_labels(n_hours: int, segments: list[dict], ramp_hours: int) -> np.ndarray:
-    """Per-hour regime name for a trajectory, matching build_gas_trajectory's
-    schedule. Ramp hours between two different regimes are labelled "transition"
-    so they don't blur either regime's statistics."""
+    """Regime name of every hour of a `build_gas_trajectory` schedule.
+
+    Parameters
+    ----------
+    n_hours, segments, ramp_hours
+        As in `build_gas_trajectory`.
+
+    Returns
+    -------
+    numpy.ndarray of str, shape (n_hours,)
+        Regime per hour; ramp hours between two *different* regimes are
+        ``"transition"``, so they don't blur either regime's statistics.
+    """
     walked, hour = _walk_segments(n_hours, segments)
     labels = np.empty(n_hours, dtype=object)
     for i, (start, end, regime) in enumerate(walked):
@@ -83,6 +117,19 @@ def gas_regime_labels(n_hours: int, segments: list[dict], ramp_hours: int) -> np
 
 
 def flat_gas_price(regime: str, custom_eur_mwh: float | None = None) -> float:
+    """Constant gas price for ``gas.mode = "flat"``.
+
+    Parameters
+    ----------
+    regime : {"pre_crisis", "crisis", "post_crisis", "custom"}
+    custom_eur_mwh : float, optional
+        Required when ``regime == "custom"``.
+
+    Returns
+    -------
+    float
+        Gas price, EUR/MWh.
+    """
     if regime == "custom":
         if custom_eur_mwh is None:
             raise ValueError("gas.flat.custom_eur_mwh must be set when regime='custom'")

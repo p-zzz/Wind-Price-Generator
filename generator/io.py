@@ -1,11 +1,13 @@
-"""
-Loading fitted objects and the small historical data slices. Deliberately does
-NOT load load_model.pkl/net_position_model.pkl -- those exist in the thesis repo
-but were dead code even there (superseded by the paired block bootstrap below,
-which draws directly from data/bootstrap_pool.parquet).
+"""Load the fitted models (``models/``) and the historical data slices (``data/``).
+
+Also patches two unpickling issues the shipped pickles need: a patsy >= 1.0.2
+frame-capture regression, and quantile-mapper classes pickled under their thesis-repo
+module names. Deliberately does not load the thesis repo's load/net-position models,
+which were superseded by the paired block bootstrap.
 """
 
 import inspect
+import json
 import numbers
 import pickle
 import sys
@@ -73,6 +75,32 @@ def _register_unpickle_classes() -> None:
 
 
 def load_fitted_objects(models_dir: Path, device: torch.device) -> dict:
+    """Load every fitted model the generator needs.
+
+    Parameters
+    ----------
+    models_dir : Path
+        Directory with the wind Transformer (+ quantile mapper), onshore/offshore
+        capacity-factor ARMA, solar CF and price model files (the repo's ``models/``).
+    device : torch.device
+        Device for the two neural networks (see `generator.run.get_device`).
+
+    Returns
+    -------
+    dict
+        Keys ``transformer``, ``mapper``, ``wind_pkl``, ``wind_cf_onshore``,
+        ``wind_cf_offshore``, ``solar``, ``price``, ``price_feature_cols`` and
+        ``mdn`` -- the price model, an `generator.price.MDN` or, for a seed
+        ensemble (``price_mdn_v11.pkl`` with a ``members`` list), an
+        `generator.price.MDNEnsemble`. Pass it unchanged to `generator.run.generate`.
+
+    Raises
+    ------
+    ValueError
+        If the price model's ``feature_columns`` differ from
+        `generator.price.PRICE_FEATURE_COLS` (inputs would otherwise be fed in the
+        wrong order without any error).
+    """
     _register_unpickle_classes()
 
     with open(models_dir / "wind_transformer_r3.pkl", "rb") as f:
@@ -137,20 +165,91 @@ def load_fitted_objects(models_dir: Path, device: torch.device) -> dict:
 
 
 def load_wind_speed_seed(data_dir: Path, k_lags: int, norm_mean: float, norm_std: float) -> list:
+    """Load the wind Transformer's initial autoregressive buffer.
+
+    Parameters
+    ----------
+    data_dir : Path
+        Directory with ``wind_speed_seed.parquet`` (recent Horns Rev 10 m wind).
+    k_lags : int
+        Number of lags the Transformer uses (buffer length).
+    norm_mean, norm_std : float
+        The Transformer's wind-speed normalisation, m/s.
+
+    Returns
+    -------
+    list of float
+        The last ``k_lags`` observed hours, normalised, oldest first. Every path
+        starts from this same buffer; paths diverge through the random draws.
+    """
     seed = pd.read_parquet(data_dir / "wind_speed_seed.parquet")
     obs_pool = seed[wind_mod.WIND_COL].dropna().values
     return list((obs_pool[-k_lags:] - norm_mean) / norm_std)
 
 
 def load_shear_table(data_dir: Path) -> pd.DataFrame:
-    """Per month x 10 m speed band shear exponents (scripts/build_shear_table.py)."""
+    """Wind-shear exponents for the hub-height wind output.
+
+    Parameters
+    ----------
+    data_dir : Path
+        Directory with ``horns_rev_shear.csv`` (built by ``scripts/build_shear_table.py``).
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per calendar month x 10 m wind-speed band: ``month``,
+        ``v10_min_ms``, ``v10_max_ms``, ``alpha``, ``n_hours``. See
+        `generator.wind.hub_height_wind_speed`.
+    """
     return pd.read_csv(data_dir / "horns_rev_shear.csv")
 
 
+def load_site_model(data_dir: Path, name: str) -> dict:
+    """Load a fitted farm-site wind model.
+
+    Parameters
+    ----------
+    data_dir : Path
+        Directory containing ``sites/<name>.json`` (the repo's ``data/``).
+    name : str
+        Site name as in ``config/sites.yaml``.
+
+    Returns
+    -------
+    dict
+        The model `generator.wind.site_wind_speed` takes (written by
+        ``scripts/build_site_model.py``).
+
+    Raises
+    ------
+    FileNotFoundError
+        If the site has no fitted model yet.
+    """
+    path = data_dir / "sites" / f"{name}.json"
+    if not path.exists():
+        raise FileNotFoundError(
+            f"No site model {path}. Add '{name}' to config/sites.yaml, then run "
+            f"pipeline/build/era5_sites_builder.py and scripts/build_site_model.py --site {name}.")
+    return json.loads(path.read_text())
+
+
 def load_bootstrap_source(data_dir: Path) -> pd.DataFrame:
-    """Reindexed onto a full hourly index so positional blocks are calendar-true;
-    the pool's missing hours become NaN rows, which paired_block_bootstrap never
-    draws across."""
+    """Historical load and net position the bootstrap resamples from.
+
+    Parameters
+    ----------
+    data_dir : Path
+        Directory with ``bootstrap_pool.parquet`` (DK1, 2023-2025, hourly).
+
+    Returns
+    -------
+    pandas.DataFrame
+        Columns ``actual_load_MW`` and ``net_position_MW`` (MW; net position is
+        export-positive, import-negative) on a gap-free hourly Europe/Copenhagen
+        index. Hours missing from the source are NaN rows, which
+        `generator.bootstrap.paired_block_bootstrap` never draws across.
+    """
     df = pd.read_parquet(data_dir / "bootstrap_pool.parquet").sort_index()
     full_idx = pd.date_range(df.index[0], df.index[-1], freq="h")
     return df[["actual_load_MW", "net_position_MW"]].reindex(full_idx)

@@ -23,15 +23,24 @@ wind:
   onshore_capacity_mw: 4162.6
   offshore_capacity_mw: 2661.7
 
+# Optional: wind at a wind-farm site, for evaluating a farm there (e.g. in WinPACT).
+# The site needs a fitted model in data/sites/<name>.json -- shipped: thor (offshore),
+# ringkobing (onshore, coast), herning (onshore, inland). Add your own via
+# config/sites.yaml (see its header).
+# Output column: site_wind_speed_hub_ms. Remove this block to leave it out.
+site:
+  name: thor
+  hub_height_m: 150
+
 solar:
   scale: 1.0                    # multiplies the installed solar capacity baseline below
   # capacity baseline (MW, as of 2026-06-01, source: Energinet CapacityPerMunicipality)
   capacity_mw: 3881.1
-  # WARNING: the shipped price model is in-domain only up to ~1.25x (wind.scale
-  # and solar.scale). Beyond that, aggregate statistics are usable with caution but
-  # individual hours are extrapolated and should not be trusted. Solar has a
-  # confirmed non-monotonic price response (trough near 3x), and joint multi-knob
-  # scenarios were not validated beyond 1.25x -- see README "Known limitations".
+  # WARNING: the price model is in-domain only up to ~1.25x (wind.scale and
+  # solar.scale, alone or together). Beyond that, aggregate statistics are usable
+  # with caution but individual hours are extrapolated; beyond ~2x results are
+  # outside the validated region, and beyond ~3x the price response saturates and
+  # capture rates stop falling -- see README "Known limitations".
 
 gas:
   mode: "trajectory"             # [flat, trajectory]
@@ -48,7 +57,7 @@ gas:
       - {regime: "crisis", years: 1}
       - {regime: "post_crisis", years: 3}
     ramp_hours: 720                # linear ramp duration between regimes (hours)
-    noise_std: 3.0                 # AR(1) innovation std (EUR/MWh)
+    noise_std: 3.0                 # AR(1) noise, stationary std (EUR/MWh)
     noise_ar: 0.99                 # AR(1) coefficient
     noise_floor: 10.0              # hard floor (EUR/MWh)
 

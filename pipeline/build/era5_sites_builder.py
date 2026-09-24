@@ -1,97 +1,102 @@
-# ERA5 multi-site dataset builder
-# Reads monthly NetCDF files produced by era5_sites_wind_download.py
-# and assembles a single parquet with one column per site.
+"""
+Extract per-site ERA5 wind from the monthly NetCDF files into one hourly parquet.
+
+Reads the sites from config/sites.yaml and the monthly files written by
+pipeline/download/era5_sites_wind_download.py (DATA/raw/era5/era5_dk1_YYYYMM.nc),
+takes the nearest ERA5 grid point to each site, and writes
+DATA/processed/era5_sites_wind_hourly.parquet with, per site,
+<site>_wind_speed_10m_ms, <site>_wind_speed_100m_ms and <site>_mslp_pa (UTC index).
+
+Adding a site that lies inside the downloaded box needs no new download -- just
+rerun this script. A site outside the box (or a month file that doesn't cover it)
+is an error, not a silent snap to the box edge.
+
+Run from the repo root (paths are relative to it):
+    python pipeline/build/era5_sites_builder.py [--raw-dir DATA/raw/era5] [--out DATA/processed]
+"""
+
+import argparse
 from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import xarray as xr
- 
-# ------ CONFIG ------
- 
-RAW_DIR = Path("DATA/raw/era5")
-OUT_DIR = Path("DATA/processed")
-OUT_DIR.mkdir(parents=True, exist_ok=True)
- 
-# Must match SITES keys in the download script exactly
-SITES = [
-    "horns_rev",
-    "esbjerg",
-    "aabenraa",
-    "bronderslev",
-]
- 
-START_LOCAL = pd.Timestamp("2014-12-12", tz="Europe/Copenhagen")
-END_LOCAL   = pd.Timestamp("2026-02-27", tz="Europe/Copenhagen")
- 
-MIN_FILE_SIZE_KB = 10  # files smaller than this are treated as broken downloads
- 
- 
-# ------ Per-site builder ------
- 
-def build_site_series(site: str, nc_files: list[Path]) -> pd.Series:
-    """
-    Open all monthly NetCDF files for one site, compute wind speed,
-    and return a UTC-indexed Series trimmed to [START_LOCAL, END_LOCAL).
-    """
-    if not nc_files:
-        raise FileNotFoundError(f"No valid NetCDF files found for site '{site}'")
- 
-    ds = xr.open_mfdataset([str(p) for p in nc_files], combine="by_coords")
- 
-    u10 = ds["u10"].mean(dim=("latitude", "longitude"))
-    v10 = ds["v10"].mean(dim=("latitude", "longitude"))
-    wspd = np.sqrt(u10 ** 2 + v10 ** 2).to_pandas()
- 
-    wspd.index = pd.DatetimeIndex(wspd.index, tz="UTC", name="time_utc")
-    wspd = wspd.sort_index()
- 
-    start_utc = START_LOCAL.tz_convert("UTC")
-    end_utc   = END_LOCAL.tz_convert("UTC")
-    wspd = wspd.loc[(wspd.index >= start_utc) & (wspd.index < end_utc)]
- 
-    wspd.name = f"{site}_wind_speed_10m_ms"
-    return wspd
- 
- 
-# ------ Main ------
- 
+import yaml
+
+REPO = Path(__file__).resolve().parents[2]
+SITES_YAML = REPO / "config" / "sites.yaml"
+MIN_FILE_SIZE = 10_000          # bytes; smaller files are broken downloads
+MAX_SNAP_DEG = 0.18             # nearest grid point must be within ~half an ERA5 cell
+
+
+def load_sites(path: Path = SITES_YAML) -> dict[str, tuple[float, float]]:
+    """{name: (lat, lon)} from config/sites.yaml."""
+    cfg = yaml.safe_load(path.read_text())
+    return {name: (float(s["lat"]), float(s["lon"])) for name, s in cfg["sites"].items()}
+
+
+def file_covers(ds: xr.Dataset, sites: dict[str, tuple[float, float]]) -> list[str]:
+    """Names of the sites whose nearest grid point in ds is too far away (i.e. outside)."""
+    lats, lons = ds["latitude"].values, ds["longitude"].values
+    return [n for n, (lat, lon) in sites.items()
+            if np.abs(lats - lat).min() > MAX_SNAP_DEG or np.abs(lons - lon).min() > MAX_SNAP_DEG]
+
+
+def extract(raw_dir: Path, sites: dict[str, tuple[float, float]]) -> pd.DataFrame:
+    files = sorted(p for p in raw_dir.glob("era5_dk1_*.nc") if p.stat().st_size > MIN_FILE_SIZE)
+    if not files:
+        raise FileNotFoundError(f"No ERA5 files (era5_dk1_*.nc) in {raw_dir}")
+
+    parts = []
+    for f in files:
+        with xr.open_dataset(f) as ds:
+            if "valid_time" in ds.dims:
+                ds = ds.rename({"valid_time": "time"})
+            missing = file_covers(ds, sites)
+            if missing:
+                raise SystemExit(
+                    f"{f.name} does not cover site(s) {missing} (box lat "
+                    f"{float(ds.latitude.min())}-{float(ds.latitude.max())}, lon "
+                    f"{float(ds.longitude.min())}-{float(ds.longitude.max())}). Run "
+                    f"pipeline/download/era5_sites_wind_download.py to re-download with a box "
+                    f"that includes them (needs a Copernicus CDS key).")
+            cols = {}
+            for name, (lat, lon) in sites.items():
+                p = ds.sel(latitude=lat, longitude=lon, method="nearest")
+                cols[f"{name}_wind_speed_10m_ms"] = np.hypot(p["u10"].values, p["v10"].values)
+                cols[f"{name}_wind_speed_100m_ms"] = np.hypot(p["u100"].values, p["v100"].values)
+                cols[f"{name}_mslp_pa"] = p["msl"].values
+            idx = pd.DatetimeIndex(ds["time"].values).tz_localize("UTC")
+            parts.append(pd.DataFrame(cols, index=idx))
+
+    df = pd.concat(parts).sort_index()
+    df = df[~df.index.duplicated(keep="last")]
+    df.index.name = "time_utc"
+    return df
+
+
 def main() -> None:
-    series = {}
- 
-    for site in SITES:
-        # Match files produced by the download script: era5_{site}_{YYYYMM}.nc
-        all_files = sorted(RAW_DIR.glob(f"era5_{site}_*.nc"))
-        valid_files = [p for p in all_files if p.stat().st_size > MIN_FILE_SIZE_KB * 1024]
-        skipped = len(all_files) - len(valid_files)
- 
-        print(f"{site}: {len(valid_files)} valid files"
-              + (f" ({skipped} skipped — too small)" if skipped else ""))
- 
-        if not valid_files:
-            print(f"  WARNING: no files found for {site}, column will be NaN")
-            series[site] = pd.Series(name=f"{site}_wind_speed_10m_ms", dtype=float)
-            continue
- 
-        series[site] = build_site_series(site, valid_files)
- 
-    # Outer join so a missing site shows as NaN rather than silently dropping rows
-    df = pd.concat(series.values(), axis=1, join="outer").sort_index()
- 
-    # Checks
-    print(f"\nAssembled dataset: {df.shape[0]} rows × {df.shape[1]} columns")
-    print(f"Time range: {df.index.min()} → {df.index.max()}")
-    print("\nMissing values per column:")
-    print(df.isna().sum())
-    print("\nHead:")
-    print(df.head())
- 
-    out_parquet = OUT_DIR / "era5_sites_wind_hourly.parquet"
-    out_csv     = OUT_DIR / "era5_sites_wind_hourly.csv"
-    df.to_parquet(out_parquet)
-    df.to_csv(out_csv)
- 
-    print(f"\nSaved:\n  {out_parquet}\n  {out_csv}")
- 
- 
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--raw-dir", type=Path, default=Path("DATA/raw/era5"))
+    parser.add_argument("--out", type=Path, default=Path("DATA/processed"))
+    args = parser.parse_args()
+
+    sites = load_sites()
+    print(f"Sites ({SITES_YAML.relative_to(REPO)}): " + ", ".join(f"{n} {v}" for n, v in sites.items()))
+    df = extract(args.raw_dir, sites)
+
+    with xr.open_dataset(sorted(args.raw_dir.glob("era5_dk1_*.nc"))[-1]) as ds:
+        for name, (lat, lon) in sites.items():
+            p = ds.sel(latitude=lat, longitude=lon, method="nearest")
+            print(f"  {name:12s} -> grid point {float(p.latitude):.2f}N {float(p.longitude):.2f}E")
+    print(f"{len(df):,} hours ({df.index.min()} .. {df.index.max()}), "
+          f"{df.isna().any(axis=1).sum()} with missing values")
+
+    args.out.mkdir(parents=True, exist_ok=True)
+    out = args.out / "era5_sites_wind_hourly.parquet"
+    df.to_parquet(out)
+    print(f"Saved {out}")
+
+
 if __name__ == "__main__":
     main()

@@ -1,0 +1,48 @@
+# ERA5 wind sites (DK1). Used by the ERA5 pipeline (pipeline/download/
+# era5_sites_wind_download.py, pipeline/build/era5_sites_builder.py) and by
+# scripts/build_site_model.py.
+#
+# To evaluate a wind farm at a new site:
+#   1. add it below (name: lowercase, no spaces; lat/lon in decimal degrees)
+#   2. extract its ERA5 wind: python pipeline/build/era5_sites_builder.py
+#      (needs: pip install -e ".[pipeline]")
+#      (only works if the site lies inside the downloaded ERA5 box -- the builder
+#      tells you; otherwise run pipeline/download/era5_sites_wind_download.py first,
+#      which needs a Copernicus CDS key)
+#   3. fit its site model:    python scripts/build_site_model.py --site <name>
+#   4. use it in a scenario:  site: {name: <name>, hub_height_m: <m>} in the config
+#
+# ERA5 is a ~0.25 deg (~28 km) grid: the nearest grid point stands in for the site.
+# Fine offshore; onshore it smooths out local terrain and roughness.
+
+system_site: horns_rev   # the models' wind input -- do not change without retraining
+
+sites:
+  horns_rev:
+    lat: 55.55
+    lon: 7.91
+    description: "Horns Rev, North Sea -- DK1 system wind (drives the price model)"
+  esbjerg:
+    lat: 55.465
+    lon: 8.551
+    description: "Esbjerg, west coast"
+  aabenraa:
+    lat: 54.9169
+    lon: 9.3587
+    description: "Aabenraa, south-east Jutland"
+  bronderslev:
+    lat: 57.3169
+    lon: 9.9593
+    description: "Broenderslev, north Jutland"
+  thor:
+    lat: 56.35
+    lon: 7.80
+    description: "Thor offshore wind farm area, ~22 km off Thorsminde (approximate)"
+  ringkobing:
+    lat: 56.09
+    lon: 8.24
+    description: "Onshore near Ringkoebing, west Jutland"
+  herning:
+    lat: 56.14
+    lon: 8.97
+    description: "Onshore, mid-Jutland (inland)"

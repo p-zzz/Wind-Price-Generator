@@ -1,5 +1,8 @@
 # DK1 Joint Scenario Generator
 
+**Documentation:** https://p-zzz.github.io/Wind-Price-Generator/ (user guide, model
+theory, validation, API reference; build locally with `pip install -e ".[docs]" && cd docs && make html`).
+
 A stochastic scenario generator for the DK1 (Denmark West) bidding zone: produces
 realistic hourly time series of wind speed, wind generation, solar generation,
 load, net position, and day-ahead electricity price, over a multi-year horizon.
@@ -74,6 +77,11 @@ in-domain range this is trustworthy over.
 
 ## Known limitations
 
+- **To evaluate a wind farm, use `site_wind_speed_hub_ms`** (a `site:` block;
+  shipped sites `thor`, `ringkobing` and `herning`, add your own via `config/sites.yaml`, see
+  the docs' "Evaluating a wind-farm site"). It is the farm site's wind, generated
+  together with the system wind so it stays correlated with prices. Feeding a
+  farm model the Horns Rev wind evaluates a farm *at Horns Rev*.
 - **`wind_speed_ms` is 10 m wind at a single ERA5 point (Horns Rev), not hub
   height.** Every model is trained on it, and it drives the price model as a
   merit-order signal. For turbine power or energy use `wind_speed_hub_ms`
@@ -87,17 +95,26 @@ in-domain range this is trustworthy over.
   far more than any realistic site achieves. Both columns are offshore Horns Rev
   wind: fine for DK1 offshore farms, but not a substitute for measured wind at
   a specific onshore site.
-- **The shipped price model is in-domain only up to ~1.25x scale.** Beyond
-  that, aggregate statistics are usable with caution, but individual hours are
-  extrapolated and should not be trusted. Joint multi-knob scenarios (e.g.
-  `wind.scale` and `solar.scale` both raised) were not validated beyond 1.25x.
-  The generator prints a warning when either knob is above 1.25x.
-- **Solar scaling has a confirmed non-monotonic price response.** Confirmed both
-  by an isolated single-feature probe and by the full correlated generator
-  (stratified by season/day-night): mean price troughs near `solar.scale≈3x` in
-  every season tested, then rises again at 4x/5x. Wind's equivalent effect is
-  far smaller (a sub-1-EUR/MWh wobble in one seasonal context) and not treated
-  as a practical concern.
+- **The price model is in-domain only up to ~1.25x on either scale knob.** At
+  1.25x about 1% of hours have a solar or wind load ratio beyond anything in the
+  2015-2025 training data; at 2x it is 12-13%, and the ensemble's members
+  disagree noticeably more (+15% for solar, +64% for wind). Beyond ~1.25x treat
+  results as increasingly extrapolated -- aggregate statistics usable with
+  caution, individual hours not -- and beyond ~2x as outside the validated
+  region. Raising both knobs together (checked up to 3x) behaves like the more
+  extrapolated of the two. The generator prints a warning above 1.25x.
+- **The price response saturates at high scale.** Mean price falls
+  monotonically with both knobs up to 5x (the previous single-seed model's
+  solar-price reversal near 3x does not occur with the ensemble), but the fall
+  flattens beyond ~3x, and capture rates stop falling: solar's rises again from
+  0.28 at 3x to 0.35 at 5x, wind's flattens around 0.68. That is the model
+  running out of training data, not physics -- more capacity should keep
+  cannibalising its own capture price -- so don't rely on capture rates above ~2x.
+- **The price level runs slightly low.** On its own historical inputs the price
+  model's expected price is 1-7 EUR/MWh below the observed mean per half-year in
+  2023 H2 - 2025 H1, and about 18 EUR/MWh below in 2025 H2 (DK1 prices stayed
+  around 80 EUR/MWh while gas fell). Treat absolute levels as a few EUR/MWh
+  conservative; differences between scenarios are more reliable than levels.
 - **Solar has no stochastic residual.** `solar_generation_MW` is a deterministic
   seasonal-mean capacity factor -- real cloud-driven day-to-day variance exists
   in the training data but is not reproduced in simulated paths. Wind does have

@@ -1,7 +1,9 @@
 # era5_sites_wind_download.py, optimised for speed
-# Single bounding box covering all DK1 sites
-# ThreadPoolExecutor submits all months concurrently
-# Site wind speeds extracted by nearest-grid-point after download
+# Single bounding box covering all sites in config/sites.yaml (+0.25 deg margin).
+# ThreadPoolExecutor submits all months concurrently. Cached months are reused only
+# if they cover every site -- otherwise re-downloaded (a stale smaller box would make
+# nearest-grid-point extraction silently snap to its edge).
+# Per-site extraction is done by pipeline/build/era5_sites_builder.py afterwards.
 
 from __future__ import annotations
 
@@ -9,10 +11,15 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+import sys
+
 import cdsapi
 import numpy as np
 import pandas as pd
 import xarray as xr
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "build"))
+import era5_sites_builder as builder  # noqa: E402  (shared site list + extraction)
 
 # ------ CONFIG ------
 
@@ -21,12 +28,7 @@ OUT_PROCESSED = Path("DATA/processed")
 OUT_RAW.mkdir(parents=True, exist_ok=True)
 OUT_PROCESSED.mkdir(parents=True, exist_ok=True)
 
-SITES = {
-    "horns_rev":   (55.55,   7.91  ),
-    "esbjerg":     (55.465,  8.551 ),
-    "aabenraa":    (54.9169, 9.3587),
-    "bronderslev": (57.3169, 9.9593),
-}
+SITES = builder.load_sites()   # {name: (lat, lon)} from config/sites.yaml
 
 START_LOCAL = pd.Timestamp("1990-01-01", tz="Europe/Copenhagen")
 END_LOCAL   = pd.Timestamp.now(tz="Europe/Copenhagen").normalize()
@@ -40,7 +42,7 @@ MAX_RETRIES = 3
 # ------ Bounding box covering ALL sites in one request ------
 
 def dk1_area() -> list[float]:
-    """Single N/W/S/E box that contains all four sites with a 0.25° margin."""
+    """Single N/W/S/E box that contains all sites in config/sites.yaml with a 0.25° margin."""
     lats = [lat for lat, _ in SITES.values()]
     lons = [lon for _, lon in SITES.values()]
     return [
@@ -67,8 +69,12 @@ def retrieve_one_month(year: int, month: int, area: list[float]) -> Path:
     target = target_path(year, month)
 
     if target.exists() and target.stat().st_size > 10_000:
-        print(f"  skip {target.name} (already exists)")
-        return target
+        with xr.open_dataset(target) as ds:
+            uncovered = builder.file_covers(ds, SITES)
+        if not uncovered:
+            print(f"  skip {target.name} (already exists, covers all sites)")
+            return target
+        print(f"  re-download {target.name}: does not cover {uncovered}")
 
     req = {
         "product_type": "reanalysis",
@@ -139,61 +145,16 @@ def download_all(area: list[float]) -> list[Path]:
     return sorted(completed)
 
 
-# ------ Extract per-site series from downloaded NetCDFs ------
-
-def extract_site_series(nc_files: list[Path]) -> pd.DataFrame:
-    """
-    Open all monthly files, extract u10/v10 at the nearest grid point to each
-    site, compute wind speed, return a UTC-indexed DataFrame.
-    """
-    valid = [p for p in nc_files if p.exists() and p.stat().st_size > 10_000]
-    if not valid:
-        raise FileNotFoundError("No valid NetCDF files to process.")
-
-    print(f"Opening {len(valid)} NetCDF files ...")
-    ds = xr.open_mfdataset([str(p) for p in valid], combine="by_coords")
-
-    # Handle both old and new files transparently
-    time_dim = "valid_time" if "valid_time" in ds.dims else "time"
-    print(f"  detected time dimension: '{time_dim}'")
-    if time_dim == "valid_time":
-        ds = ds.rename({"valid_time": "time"})
-
-    start_utc = START_LOCAL.tz_convert("UTC").tz_localize(None)
-    end_utc   = END_LOCAL.tz_convert("UTC").tz_localize(None)
-    ds = ds.sel(time=slice(start_utc, end_utc))
-
-    series = {}
-    for site, (lat, lon) in SITES.items():
-        point = ds.sel(latitude=lat, longitude=lon, method="nearest")
-        
-        u10  = point["u10"].values
-        v10  = point["v10"].values
-        u100 = point["u100"].values
-        v100 = point["v100"].values
-        msl  = point["msl"].values
-
-        idx = pd.DatetimeIndex(point["time"].values).tz_localize("UTC")
-
-        series[f"{site}_wind_speed_10m_ms"]  = pd.Series(np.sqrt(u10**2  + v10**2),  index=idx)
-        series[f"{site}_wind_speed_100m_ms"] = pd.Series(np.sqrt(u100**2 + v100**2), index=idx)
-        series[f"{site}_mslp_pa"]            = pd.Series(msl, index=idx)
-
-    df = pd.DataFrame(series).sort_index()
-    df.index.name = "time_utc"
-    return df
-
-
 # ------ Main ------
 
 def main() -> None:
     area = dk1_area()
     print(f"Bounding box (N/W/S/E): {area}")
 
-    nc_files = download_all(area)
+    download_all(area)
 
     print("\nExtracting per-site wind speed series ...")
-    df = extract_site_series(nc_files)
+    df = builder.extract(OUT_RAW, SITES)
 
     print(f"\nDataset: {df.shape[0]} rows × {df.shape[1]} columns")
     print(f"Range:   {df.index.min()} → {df.index.max()}")
@@ -203,10 +164,8 @@ def main() -> None:
     print(df.tail())
 
     out_parquet = OUT_PROCESSED / "era5_sites_wind_hourly.parquet"
-    out_csv     = OUT_PROCESSED / "era5_sites_wind_hourly.csv"
     df.to_parquet(out_parquet)
-    df.to_csv(out_csv)
-    print(f"\nSaved:\n  {out_parquet}\n  {out_csv}")
+    print(f"\nSaved: {out_parquet}")
 
 
 if __name__ == "__main__":

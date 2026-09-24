@@ -1,18 +1,16 @@
-"""
-Price MDN v11 -- the only price model shipped in this repo (see README "Known
-limitations" for why v10 was not: it's scale-invariant by construction, so
-WIND_SCALE/SOLAR_SCALE cannot move price at all under it, defeating the point of a
-cannibalisation-risk tool). v11 replaces solar_cf/wind_gen_ratio with
-solar_load_ratio = solar_MW/actual_load_MW and wind_load_ratio =
-wind_generation_MW/actual_load_MW -- built from the already-scaled MW streams, so
-the scale knobs flow through to price.
+"""Price MDN v11: DK1 day-ahead price as a conditional Gaussian mixture.
 
-In-domain range: only up to ~1.25x wind.scale/solar.scale. Beyond that, aggregate
-statistics are usable with caution but individual hours are extrapolated and should
-not be trusted. Solar scaling has a confirmed non-monotonic price response (trough
-near 3x; isolated-feature probe + full correlated-generator confirmation in the
-thesis repo, both cited in README). Joint multi-knob scenarios were not validated
-beyond 1.25x.
+Inputs per hour: calendar, 10 m wind speed, ``solar_load_ratio`` and
+``wind_load_ratio`` (scaled MW / load, so ``wind.scale``/``solar.scale`` move
+price), load, net position and gas price. The shipped model is a 10-seed ensemble
+(`MDNEnsemble`) trained on 2015-2025 with signed net position.
+
+In-domain range: only up to ~1.25x wind.scale/solar.scale (at 2x, 12-13% of hours
+have a solar/wind load ratio beyond the 2015-2025 training data). Beyond that,
+aggregate statistics are usable with caution but individual hours are extrapolated.
+Beyond ~3x the price response saturates and capture rates stop falling -- an
+extrapolation artifact. Joint scaling behaves like the more extrapolated knob. See
+README "Known limitations" (scale sweep on the 10-seed ensemble, 2026-09).
 """
 
 import numpy as np
@@ -22,10 +20,10 @@ import torch.nn as nn
 LOG_STD_MIN = -4.0
 LOG_STD_MAX = 6.0
 
-# Column order the fitted model expects. simulate_price_mdn() passes its inputs
-# positionally in this order, and the wind x solar interaction term is built from
-# columns 0 and 1 -- load_fitted_objects() asserts the pkl's "feature_columns"
-# match exactly, so a reordered pkl fails loudly instead of mislabelling inputs.
+#: Column order the fitted model expects. simulate_price_mdn() passes its inputs
+#: positionally in this order, and the wind x solar interaction term is built from
+#: columns 0 and 1 -- load_fitted_objects() asserts the pkl's "feature_columns"
+#: match exactly, so a reordered pkl fails loudly instead of mislabelling inputs.
 PRICE_FEATURE_COLS = [
     "horns_rev_wind_speed_10m_ms",
     "solar_load_ratio",
@@ -109,6 +107,47 @@ def simulate_price_mdn(
     feature_cols: list[str],
     device: torch.device,
 ) -> np.ndarray:
+    """Draw one day-ahead price per hour from the model's conditional distribution.
+
+    Parameters
+    ----------
+    idx : pandas.DatetimeIndex
+        Local-time calendar (hour, month feed the model).
+    wind_speed : numpy.ndarray, shape (n_hours,)
+        10 m wind speed at Horns Rev, m/s.
+    solar_load_ratio, wind_load_ratio : numpy.ndarray, shape (n_hours,)
+        Solar / wind generation at scaled capacity divided by load (dimensionless).
+    load, net_position : numpy.ndarray, shape (n_hours,)
+        Load and net position (export-positive), MW.
+    gas_price : float or numpy.ndarray of shape (n_hours,)
+        TTF gas price, EUR/MWh.
+    mdn : torch.nn.Module
+        `MDN` or `MDNEnsemble` (`generator.io.load_fitted_objects` ``["mdn"]``).
+    norm_stats : dict
+        Per-input training mean/std, from the price model file.
+    rng : numpy.random.Generator
+        Draws the mixture component and the Gaussian sample (two draws per hour).
+    feature_cols : list of str
+        Input order; must equal `PRICE_FEATURE_COLS` (checked at load time).
+    device : torch.device
+
+    Returns
+    -------
+    numpy.ndarray of float32, shape (n_hours,)
+        Day-ahead price, EUR/MWh. Not clipped: can fall outside the market's
+        harmonised limits.
+
+    Notes
+    -----
+    Inputs are standardised with the training statistics and never clipped, so
+    values outside the 2015-2025 range are extrapolated. Hours are sampled
+    independently given their inputs; price autocorrelation comes from the
+    autocorrelated inputs.
+
+    Warnings
+    --------
+    In-domain only up to ~1.25x on the scale knobs; see the module docstring.
+    """
     gas_arr = (
         np.full(len(idx), gas_price, dtype=np.float32)
         if np.isscalar(gas_price)
