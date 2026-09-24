@@ -66,18 +66,21 @@ are separate, independently-scaled streams: simulated capacity factor x target
 installed capacity x scale. Price MDN v11 takes `solar_load_ratio`/
 `wind_load_ratio` (the scaled MW streams divided by simulated load), so
 `wind.scale`/`solar.scale` do move price -- see "Known limitations" for the
-validated range this is trustworthy over.
+in-domain range this is trustworthy over.
 
 ## Known limitations
 
-- **Price MDN v11's response to solar reverses sign around `solar.scale≈3.0x`.**
-  Confirmed both by an isolated single-feature probe and by the full correlated
-  generator (stratified by season/day-night): mean price troughs at
-  `solar.scale≈3.0x` in every season tested, then rises again at 4x/5x. Treat
-  any run with `solar.scale` above roughly 2.0-2.5x as outside the validated
-  region -- `config/example.yaml` warns at 2.5x and above. Wind's equivalent
-  effect is far smaller (a sub-1-EUR/MWh wobble in one seasonal context) and
-  not treated as a practical concern.
+- **The shipped price model is in-domain only up to ~1.25x scale.** Beyond
+  that, aggregate statistics are usable with caution, but individual hours are
+  extrapolated and should not be trusted. Joint multi-knob scenarios (e.g.
+  `wind.scale` and `solar.scale` both raised) were not validated beyond 1.25x.
+  The generator prints a warning when either knob is above 1.25x.
+- **Solar scaling has a confirmed non-monotonic price response.** Confirmed both
+  by an isolated single-feature probe and by the full correlated generator
+  (stratified by season/day-night): mean price troughs near `solar.scale≈3x` in
+  every season tested, then rises again at 4x/5x. Wind's equivalent effect is
+  far smaller (a sub-1-EUR/MWh wobble in one seasonal context) and not treated
+  as a practical concern.
 - **Solar has no stochastic residual.** `solar_generation_MW` is a deterministic
   seasonal-mean capacity factor -- real cloud-driven day-to-day variance exists
   in the training data but is not reproduced in simulated paths. Wind does have
@@ -98,6 +101,14 @@ validated range this is trustworthy over.
   joint distribution and autocorrelation structure but means simulated paths
   cannot express a future load/net-position regime that never occurred in that
   window.
+- **Net position is unsigned in the shipped model and data.** A bug in the
+  ENTSO-E download parser dropped the flow direction, so the shipped price
+  model was trained on net-position *magnitudes* (import and export look the
+  same), and `data/bootstrap_pool.parquet` holds the same unsigned values. The
+  parser in `pipeline/download/entsoe_download.py` is fixed (export positive,
+  import negative), but the shipped model and data have not yet been rebuilt
+  from it. Until they are, `net_position_MW` in generated scenarios is
+  non-negative and should not be read as a direction of flow.
 
 ## Repository layout
 

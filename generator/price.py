@@ -7,10 +7,12 @@ solar_load_ratio = solar_MW/actual_load_MW and wind_load_ratio =
 wind_generation_MW/actual_load_MW -- built from the already-scaled MW streams, so
 the scale knobs flow through to price.
 
-CONFIRMED FAILURE MODE: v11's price response to solar reverses sign at
-SOLAR_SCALE~=3.0x (isolated-feature probe + full correlated-generator confirmation
-in the thesis repo, both cited in README). Treat any run with solar.scale >= ~2.5x
-as outside the validated region.
+In-domain range: only up to ~1.25x wind.scale/solar.scale. Beyond that, aggregate
+statistics are usable with caution but individual hours are extrapolated and should
+not be trusted. Solar scaling has a confirmed non-monotonic price response (trough
+near 3x; isolated-feature probe + full correlated-generator confirmation in the
+thesis repo, both cited in README). Joint multi-knob scenarios were not validated
+beyond 1.25x.
 """
 
 import numpy as np

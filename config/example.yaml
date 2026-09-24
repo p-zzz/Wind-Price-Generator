@@ -20,9 +20,11 @@ solar:
   scale: 1.0                    # multiplies the installed solar capacity baseline below
   # capacity baseline (MW, as of 2026-06-01, source: Energinet CapacityPerMunicipality)
   capacity_mw: 3881.1
-  # WARNING: Price MDN v11's response to solar is only validated up to roughly
-  # scale=2.0-2.5x and its sign REVERSES around scale=3.0x -- see README
-  # "Known limitations" before trusting any run at or above that.
+  # WARNING: the shipped price model is in-domain only up to ~1.25x (wind.scale
+  # and solar.scale). Beyond that, aggregate statistics are usable with caution but
+  # individual hours are extrapolated and should not be trusted. Solar has a
+  # confirmed non-monotonic price response (trough near 3x), and joint multi-knob
+  # scenarios were not validated beyond 1.25x -- see README "Known limitations".
 
 gas:
   mode: "trajectory"             # [flat, trajectory]

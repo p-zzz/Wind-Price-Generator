@@ -10,7 +10,8 @@ from pathlib import Path
 
 import yaml
 
-SOLAR_SCALE_WARN_THRESHOLD = 2.5
+# Shipped price model is in-domain only up to this wind.scale / solar.scale.
+IN_DOMAIN_SCALE_MAX = 1.25
 
 
 @dataclass
@@ -79,14 +80,16 @@ class Config:
         gas = raw["gas"]
         paths = raw["paths"]
 
-        if solar["scale"] >= SOLAR_SCALE_WARN_THRESHOLD:
-            print(
-                f"WARNING: solar.scale={solar['scale']} is >= "
-                f"{SOLAR_SCALE_WARN_THRESHOLD} -- Price MDN v11's response to solar "
-                f"is only validated up to roughly this point and its sign reverses "
-                f"around 3.0x. Treat this run's price output as unreliable. "
-                f"See README 'Known limitations'."
-            )
+        for knob, scale in (("wind.scale", wind["scale"]), ("solar.scale", solar["scale"])):
+            if scale > IN_DOMAIN_SCALE_MAX:
+                print(
+                    f"WARNING: {knob}={scale} is above {IN_DOMAIN_SCALE_MAX}x -- the "
+                    f"shipped price model is in-domain only up to ~{IN_DOMAIN_SCALE_MAX}x. "
+                    f"Aggregate statistics are usable with caution, but individual "
+                    f"hours are extrapolated and should not be trusted (solar has a "
+                    f"confirmed non-monotonic price response, trough near 3x). "
+                    f"See README 'Known limitations'."
+                )
 
         return cls(
             horizon_hours=int(gen["horizon_hours"]),
