@@ -17,7 +17,7 @@ import torch
 import torch.nn as nn
 
 from . import wind as wind_mod
-from .price import MDN
+from .price import MDN, PRICE_FEATURE_COLS
 
 # ------ Patsy unpickling patch ------
 #
@@ -85,6 +85,12 @@ def load_fitted_objects(models_dir: Path, device: torch.device) -> dict:
         solar_pkl = pickle.load(f)
     with open(models_dir / "price_mdn_v11.pkl", "rb") as f:
         price_pkl = pickle.load(f)
+
+    if list(price_pkl["feature_columns"]) != PRICE_FEATURE_COLS:
+        raise ValueError(
+            f"price_mdn_v11.pkl feature_columns {price_pkl['feature_columns']} do not "
+            f"match the order simulate_price_mdn() feeds: {PRICE_FEATURE_COLS}"
+        )
 
     hp = price_pkl["hparams"]
     mdn = MDN(hp["input_dim"], hp["hidden"], hp["K"]).to(device)

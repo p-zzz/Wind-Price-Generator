@@ -20,9 +20,18 @@ import torch.nn as nn
 LOG_STD_MIN = -4.0
 LOG_STD_MAX = 6.0
 
-# Column order the fitted model expects: wind speed, solar-thing, load,
-# net position, gas, wind-thing -- read from the pkl's "feature_columns" at load
-# time (solar_load_ratio/wind_load_ratio for v11), not hardcoded here.
+# Column order the fitted model expects. simulate_price_mdn() passes its inputs
+# positionally in this order, and the wind x solar interaction term is built from
+# columns 0 and 1 -- load_fitted_objects() asserts the pkl's "feature_columns"
+# match exactly, so a reordered pkl fails loudly instead of mislabelling inputs.
+PRICE_FEATURE_COLS = [
+    "horns_rev_wind_speed_10m_ms",
+    "solar_load_ratio",
+    "actual_load_MW",
+    "net_position_MW",
+    "ttf_gas_price_eur_mwh",
+    "wind_load_ratio",
+]
 
 
 class MDN(nn.Module):
