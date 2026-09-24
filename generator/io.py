@@ -17,7 +17,7 @@ import torch
 import torch.nn as nn
 
 from . import wind as wind_mod
-from .price import MDN, PRICE_FEATURE_COLS
+from .price import MDN, MDNEnsemble, PRICE_FEATURE_COLS
 
 # ------ Patsy unpickling patch ------
 #
@@ -92,11 +92,18 @@ def load_fitted_objects(models_dir: Path, device: torch.device) -> dict:
             f"match the order simulate_price_mdn() feeds: {PRICE_FEATURE_COLS}"
         )
 
+    # Either one model ("best_model_path") or a seed ensemble ("members", written by
+    # pipeline/train/assemble_price_ensemble.py) sharing norm_stats/hparams.
     hp = price_pkl["hparams"]
-    mdn = MDN(hp["input_dim"], hp["hidden"], hp["K"]).to(device)
-    stored = Path(price_pkl["best_model_path"])
-    pt_path = stored if stored.exists() else models_dir / stored.name
-    mdn.load_state_dict(torch.load(pt_path, map_location=device))
+    members = price_pkl.get("members") or [{"best_model_path": price_pkl["best_model_path"]}]
+    nets = []
+    for member in members:
+        net = MDN(hp["input_dim"], hp["hidden"], hp["K"]).to(device)
+        stored = Path(member["best_model_path"])
+        pt_path = stored if stored.exists() else models_dir / stored.name
+        net.load_state_dict(torch.load(pt_path, map_location=device))
+        nets.append(net)
+    mdn = nets[0] if len(nets) == 1 else MDNEnsemble(nets).to(device)
     mdn.eval()
 
     wind_cfg = wind_pkl["hparams"]

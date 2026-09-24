@@ -59,6 +59,29 @@ class MDN(nn.Module):
         return pi, means, log_std
 
 
+class MDNEnsemble(nn.Module):
+    """Equal-weight ensemble of MDNs trained on the same data with different seeds.
+
+    Pools every member's K components into one mixture of M*K components with
+    weights pi/M -- sampling from it is exactly "pick a member uniformly, then sample
+    from that member". Same (pi, means, log_std) interface as MDN, so
+    simulate_price_mdn() takes either. Averages out the seed-to-seed spread of
+    single models (see README "Known limitations").
+    """
+
+    def __init__(self, members: list[nn.Module]):
+        super().__init__()
+        self.members = nn.ModuleList(members)
+
+    def forward(self, x):
+        outs = [m(x) for m in self.members]
+        n = len(outs)
+        pi = torch.cat([o[0] for o in outs], dim=-1) / n
+        means = torch.cat([o[1] for o in outs], dim=-1)
+        log_std = torch.cat([o[2] for o in outs], dim=-1)
+        return pi, means, log_std
+
+
 def _calendar_features(index) -> np.ndarray:
     hour = index.hour
     month = index.month
@@ -82,7 +105,6 @@ def simulate_price_mdn(
     wind_load_ratio: np.ndarray,
     mdn: nn.Module,
     norm_stats: dict,
-    K: int,
     rng: np.random.Generator,
     feature_cols: list[str],
     device: torch.device,
@@ -110,10 +132,10 @@ def simulate_price_mdn(
         means_np = means_t.cpu().numpy()
         std_np = log_std_t.exp().cpu().numpy()
 
-    n = len(X)
+    n, n_components = pi_np.shape  # K for one MDN, M*K for an MDNEnsemble
     u = rng.uniform(0.0, 1.0, size=n)
     cumsum = np.cumsum(pi_np, axis=1)
-    k_idx = np.clip((u[:, None] >= cumsum).sum(axis=1), 0, K - 1)
+    k_idx = np.clip((u[:, None] >= cumsum).sum(axis=1), 0, n_components - 1)
     sel_means = means_np[np.arange(n), k_idx]
     sel_stds = std_np[np.arange(n), k_idx]
     return rng.normal(sel_means, sel_stds).astype(np.float32)

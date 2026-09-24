@@ -83,7 +83,6 @@ def generate(cfg: Config, fitted: dict, device: torch.device) -> pd.DataFrame:
     price_pkl = fitted["price"]
     mdn = fitted["mdn"]
     norm_stats = price_pkl["norm_stats"]
-    K = price_pkl["hparams"]["K"]
     feature_cols = fitted["price_feature_cols"]
 
     wind_capacity_baseline = {
@@ -133,7 +132,7 @@ def generate(cfg: Config, fitted: dict, device: torch.device) -> pd.DataFrame:
 
         price = simulate_price_mdn(
             df_idx.index, wind_speed, solar_load_ratio, load, net_pos, gas_price,
-            wind_load_ratio, mdn, norm_stats, K, rng, feature_cols, device,
+            wind_load_ratio, mdn, norm_stats, rng, feature_cols, device,
         )
 
         records.append(
