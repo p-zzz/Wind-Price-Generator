@@ -40,6 +40,7 @@ Fitted objects:
   models/price/fitted/price_mdn_v11_best.pt
 """
 
+import os
 import pickle
 import sys
 from pathlib import Path
@@ -109,6 +110,11 @@ WEIGHT_DECAY = 1e-4
 PATIENCE     = 20
 OVERSAMPLE_WEIGHT = 3.5
 N_SIM_PATHS  = 10
+# Seeds weight init + the oversampling sampler (the train/val split is chronological,
+# so already deterministic). Val NLL varies ~0.1 across seeds, so the shipped model
+# was chosen as the best val NLL of seeds {1, 2, 3, 4, 42} on signed net position;
+# the default reproduces it. Override with PRICE_MDN_SEED=<int> to try others.
+SEED = int(os.environ.get("PRICE_MDN_SEED", 2))
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}")
@@ -494,6 +500,8 @@ def main():
     X, y = build_features(df)
 
     print("\n------ Model initialisation ------")
+    torch.manual_seed(SEED)
+    print(f"Seed: {SEED}")
     model    = MDN(INPUT_DIM, HIDDEN_DIMS, K_COMPONENTS).to(device)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Parameters: {n_params:,}")
@@ -515,6 +523,7 @@ def main():
             "solar_load_ratio": True,
             "wind_load_ratio":  True,
             "oversample_weight": OVERSAMPLE_WEIGHT,
+            "seed":              SEED,
             "distribution":     "gaussian",
         },
         "best_model_path":  best_model_path,

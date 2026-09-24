@@ -16,13 +16,19 @@ Two files come out of this:
 Capacity baseline (onshore/offshore/solar installed MW) is not extracted as a data
 file -- see print_capacity_baseline() below, which prints the three scalars to bake
 into config/example.yaml directly (not worth a parquet for three numbers).
+
+--source points at any directory with the thesis layout (DATA/processed/...,
+DATA/raw/...), e.g. a workspace rebuilt via pipeline/build/; it defaults to the
+thesis repo's Code/. The bootstrap pool must come from the same processed data the
+shipped price model was trained on (see README "Known limitations").
 """
 
+import argparse
 from pathlib import Path
 
 import pandas as pd
 
-CODE_ROOT = Path(__file__).resolve().parents[2] / "Code"
+CODE_ROOT = Path(__file__).resolve().parents[2] / "Code"  # default --source
 THIS_DATA = Path(__file__).resolve().parents[1] / "data"
 THIS_DATA.mkdir(parents=True, exist_ok=True)
 
@@ -64,6 +70,11 @@ def print_capacity_baseline() -> None:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--source", type=Path, default=CODE_ROOT,
+                        help="root with DATA/processed and DATA/raw (default: thesis Code/)")
+    CODE_ROOT = parser.parse_args().source.resolve()
+    print(f"Source: {CODE_ROOT}")
     extract_wind_speed_seed()
     extract_bootstrap_pool()
     print_capacity_baseline()
