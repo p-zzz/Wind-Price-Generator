@@ -83,7 +83,9 @@ def generate(cfg: Config, fitted: dict, device: torch.device) -> pd.DataFrame:
     }
 
     df_idx = build_sim_index(cfg.horizon_hours, cfg.start_date)
-    hist_load, hist_netpos = load_bootstrap_source(cfg.paths.data_dir)
+    pool = load_bootstrap_source(cfg.paths.data_dir)
+    hist_load = pool["actual_load_MW"].to_numpy()
+    hist_netpos = pool["net_position_MW"].to_numpy()
 
     rng = np.random.default_rng(cfg.random_seed)
     solar_cf = simulate_solar_cf(df_idx, fitted["solar"])
@@ -113,7 +115,8 @@ def generate(cfg: Config, fitted: dict, device: torch.device) -> pd.DataFrame:
         )
 
         load, net_pos = paired_block_bootstrap(
-            hist_load, hist_netpos, cfg.horizon_hours, cfg.block_size, rng
+            hist_load, hist_netpos, pool.index, df_idx.index,
+            cfg.block_size, cfg.bootstrap_window_days, rng,
         )
 
         solar_load_ratio = solar_mw / load

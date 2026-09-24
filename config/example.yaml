@@ -3,6 +3,9 @@ generator:
   n_paths: 1                    # number of independent stochastic paths to draw
   random_seed: 42
   block_size: 168               # bootstrap block length for load/net-position (hours)
+  bootstrap_window_days: 14     # blocks are drawn from the same local hour-of-day and
+                                 # a day-of-year within +/- this many days of the hour
+                                 # they fill, so load keeps its season and daily cycle
   start_date: "2024-01-01"      # first timestamp of the output CSV -- match this to
                                  # WinPACT's Project_StartDate (or your own tool's COD)
                                  # so the two timelines line up hour-for-hour

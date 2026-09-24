@@ -135,6 +135,10 @@ def load_wind_speed_seed(data_dir: Path, k_lags: int, norm_mean: float, norm_std
     return list((obs_pool[-k_lags:] - norm_mean) / norm_std)
 
 
-def load_bootstrap_source(data_dir: Path) -> tuple[np.ndarray, np.ndarray]:
-    df = pd.read_parquet(data_dir / "bootstrap_pool.parquet")
-    return df["actual_load_MW"].values, df["net_position_MW"].values
+def load_bootstrap_source(data_dir: Path) -> pd.DataFrame:
+    """Reindexed onto a full hourly index so positional blocks are calendar-true;
+    the pool's missing hours become NaN rows, which paired_block_bootstrap never
+    draws across."""
+    df = pd.read_parquet(data_dir / "bootstrap_pool.parquet").sort_index()
+    full_idx = pd.date_range(df.index[0], df.index[-1], freq="h")
+    return df[["actual_load_MW", "net_position_MW"]].reindex(full_idx)

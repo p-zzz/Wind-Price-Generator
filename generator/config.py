@@ -66,6 +66,7 @@ class Config:
     solar: SolarConfig
     gas: GasConfig
     paths: PathsConfig
+    bootstrap_window_days: int = 14
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "Config":
@@ -112,4 +113,5 @@ class Config:
                 data_dir=Path(paths["data_dir"]),
                 output_dir=Path(paths["output_dir"]),
             ),
+            bootstrap_window_days=int(gen.get("bootstrap_window_days", 14)),
         )
