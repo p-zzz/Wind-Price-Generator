@@ -12,6 +12,13 @@ generator:
 
 wind:
   scale: 1.0                    # multiplies the installed onshore+offshore capacity baseline below
+  hub_height_m: 150             # height of the wind_speed_hub_ms output column -- set to YOUR
+                                 # turbine's hub height (default 150 if omitted; null = no column).
+                                 # Typical: onshore 4-6 MW ~100-130, offshore 8-11 MW ~110-140,
+                                 # 14-15 MW ~140-150, 20-22 MW ~160-170. Use wind_speed_hub_ms, not
+                                 # the 10 m wind_speed_ms, for turbine power/energy. Both are Horns
+                                 # Rev (Danish North Sea, offshore) wind: representative for DK1
+                                 # offshore farms, not for a specific onshore site.
   # capacity baseline (MW, as of 2026-06-01, source: Energinet CapacityPerMunicipality)
   onshore_capacity_mw: 4162.6
   offshore_capacity_mw: 2661.7

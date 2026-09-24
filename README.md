@@ -31,7 +31,8 @@ pip install -e .
 python -m generator.run --config config/example.yaml
 ```
 
-Output: a CSV under `outputs/` with hourly `wind_speed_ms`, `wind_generation_MW`,
+Output: a CSV under `outputs/` with hourly `wind_speed_ms` (10 m, see below),
+`wind_speed_hub_ms` (at `wind.hub_height_m`, default 150 m), `wind_generation_MW`,
 `solar_generation_MW`, `actual_load_MW`, `net_position_MW`, `gas_price_eur_mwh`,
 and `day_ahead_price` columns, plus a printed validation table: marginal stats,
 and Spearman(wind speed, price) over all hours and per gas regime. Expect it to
@@ -73,6 +74,19 @@ in-domain range this is trustworthy over.
 
 ## Known limitations
 
+- **`wind_speed_ms` is 10 m wind at a single ERA5 point (Horns Rev), not hub
+  height.** Every model is trained on it, and it drives the price model as a
+  merit-order signal. For turbine power or energy use `wind_speed_hub_ms`
+  (set `wind.hub_height_m` to your turbine's hub height; default 150 m, typical
+  for a new ~15 MW offshore turbine), which extrapolates it with the wind-shear exponent
+  measured from ERA5's own 10 m / 100 m pair at Horns Rev, per month and wind
+  speed (`data/horns_rev_shear.csv`, built by `scripts/build_shear_table.py`;
+  about 0.10 on average, 0.05-0.12 by cell). Don't apply a generic onshore
+  exponent such as 0.2 to the 10 m wind: offshore it overstates hub-height wind
+  by about a third (≈13.4 vs ≈10 m/s at 170 m) and turbine capacity factor by
+  far more than any realistic site achieves. Both columns are offshore Horns Rev
+  wind: fine for DK1 offshore farms, but not a substitute for measured wind at
+  a specific onshore site.
 - **The shipped price model is in-domain only up to ~1.25x scale.** Beyond
   that, aggregate statistics are usable with caution, but individual hours are
   extrapolated and should not be trusted. Joint multi-knob scenarios (e.g.

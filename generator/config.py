@@ -10,6 +10,10 @@ from pathlib import Path
 
 import yaml
 
+# Typical hub height of a new offshore turbine (~15 MW class). Used when the config
+# doesn't set wind.hub_height_m; set it to your turbine's, or null to drop the column.
+DEFAULT_HUB_HEIGHT_M = 150.0
+
 # Shipped price model is in-domain only up to this wind.scale / solar.scale.
 IN_DOMAIN_SCALE_MAX = 1.25
 
@@ -19,6 +23,7 @@ class WindConfig:
     scale: float
     onshore_capacity_mw: float
     offshore_capacity_mw: float
+    hub_height_m: float | None = DEFAULT_HUB_HEIGHT_M   # wind_speed_hub_ms height; None = no column
 
 
 @dataclass
@@ -101,6 +106,10 @@ class Config:
                 scale=float(wind["scale"]),
                 onshore_capacity_mw=float(wind["onshore_capacity_mw"]),
                 offshore_capacity_mw=float(wind["offshore_capacity_mw"]),
+                hub_height_m=(
+                    None if wind.get("hub_height_m", DEFAULT_HUB_HEIGHT_M) is None
+                    else float(wind.get("hub_height_m", DEFAULT_HUB_HEIGHT_M))
+                ),
             ),
             solar=SolarConfig(
                 scale=float(solar["scale"]),

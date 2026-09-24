@@ -142,6 +142,11 @@ def load_wind_speed_seed(data_dir: Path, k_lags: int, norm_mean: float, norm_std
     return list((obs_pool[-k_lags:] - norm_mean) / norm_std)
 
 
+def load_shear_table(data_dir: Path) -> pd.DataFrame:
+    """Per month x 10 m speed band shear exponents (scripts/build_shear_table.py)."""
+    return pd.read_csv(data_dir / "horns_rev_shear.csv")
+
+
 def load_bootstrap_source(data_dir: Path) -> pd.DataFrame:
     """Reindexed onto a full hourly index so positional blocks are calendar-true;
     the pool's missing hours become NaN rows, which paired_block_bootstrap never

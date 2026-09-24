@@ -25,11 +25,11 @@ from statsmodels.tsa.stattools import acf as sm_acf
 
 from .config import Config
 from .gas import build_gas_trajectory, flat_gas_price, gas_regime_labels
-from .io import load_bootstrap_source, load_fitted_objects, load_wind_speed_seed
+from .io import load_bootstrap_source, load_fitted_objects, load_shear_table, load_wind_speed_seed
 from .bootstrap import paired_block_bootstrap
 from .price import simulate_price_mdn
 from .solar import simulate_solar_cf
-from .wind import WIND_COL, run_transformer_simulation, simulate_wind_generation
+from .wind import WIND_COL, hub_height_wind_speed, run_transformer_simulation, simulate_wind_generation
 
 BURN_IN = 200
 
@@ -92,6 +92,7 @@ def generate(cfg: Config, fitted: dict, device: torch.device) -> pd.DataFrame:
 
     df_idx = build_sim_index(cfg.horizon_hours, cfg.start_date)
     pool = load_bootstrap_source(cfg.paths.data_dir)
+    shear = load_shear_table(cfg.paths.data_dir) if cfg.wind.hub_height_m else None
     hist_load = pool["actual_load_MW"].to_numpy()
     hist_netpos = pool["net_position_MW"].to_numpy()
 
@@ -135,11 +136,16 @@ def generate(cfg: Config, fitted: dict, device: torch.device) -> pd.DataFrame:
             wind_load_ratio, mdn, norm_stats, rng, feature_cols, device,
         )
 
+        hub_cols = (
+            {"wind_speed_hub_ms": hub_height_wind_speed(wind_speed, df_idx.index, cfg.wind.hub_height_m, shear)}
+            if cfg.wind.hub_height_m else {}
+        )
         records.append(
             pd.DataFrame(
                 {
                     "path": path,
                     "wind_speed_ms": wind_speed,
+                    **hub_cols,
                     "wind_generation_MW": gen_total,
                     "wind_generation_onshore_MW": gen_onshore,
                     "wind_generation_offshore_MW": gen_offshore,

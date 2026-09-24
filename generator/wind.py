@@ -334,3 +334,26 @@ def simulate_wind_generation(
     gen_onshore = cf_onshore * cap_onshore
     gen_offshore = cf_offshore * cap_offshore
     return gen_onshore, gen_offshore, gen_onshore + gen_offshore, cf_onshore, cf_offshore
+
+
+# ------ Hub-height wind speed ------
+
+
+def hub_height_wind_speed(
+    wind_speed_10m: np.ndarray,
+    index: pd.DatetimeIndex,
+    hub_height_m: float,
+    shear: pd.DataFrame,
+) -> np.ndarray:
+    """Power-law extrapolation v_hub = v10 * (hub_height_m / 10) ** alpha, with alpha
+    looked up per calendar month x 10 m speed band from shear (load_shear_table()),
+    measured from ERA5's 10 m / 100 m pair at Horns Rev. Only an output transform --
+    every model (Transformer, CF ARMA, price MDN) runs on the 10 m wind."""
+    months = np.asarray(index.month)
+    alpha = np.full(len(wind_speed_10m), np.nan)
+    for row in shear.itertuples():
+        cell = (months == row.month) & (wind_speed_10m >= row.v10_min_ms) & (wind_speed_10m < row.v10_max_ms)
+        alpha[cell] = row.alpha
+    if np.isnan(alpha).any():
+        raise ValueError("shear table does not cover every month x wind-speed band")
+    return wind_speed_10m * (hub_height_m / 10.0) ** alpha
